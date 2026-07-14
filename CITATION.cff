@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use PhoneAgent in research or engineering work, please cite this software."
+title: "PhoneAgent"
+type: software
+authors:
+  - family-names: "Liu"
+    given-names: "Wenhao"
+version: "0.1.0"
+date-released: "2026-07-14"
+url: "https://github.com/AuroraEchos/PhoneAgent"
+repository-code: "https://github.com/AuroraEchos/PhoneAgent"
+license: Apache-2.0
+keywords:
+  - Android agent
+  - GUI agent
+  - vision-language model
+  - ADB

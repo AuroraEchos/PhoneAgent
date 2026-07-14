@@ -1,0 +1,22 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="10" y1="7" x2="57" y2="59" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9C8BFF"/>
+      <stop offset="1" stop-color="#5C78F6"/>
+    </linearGradient>
+    <linearGradient id="line" x1="21" y1="15" x2="46" y2="48" gradientUnits="userSpaceOnUse">
+      <stop stop-color="white"/>
+      <stop offset="1" stop-color="#D8D4FF"/>
+    </linearGradient>
+    <filter id="shadow" x="-16" y="-16" width="96" height="96" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="8" stdDeviation="7" flood-color="#5146B7" flood-opacity=".35"/>
+    </filter>
+  </defs>
+  <rect x="5" y="5" width="54" height="54" rx="17" fill="url(#bg)" filter="url(#shadow)"/>
+  <rect x="19.5" y="13.5" width="25" height="37" rx="7.5" stroke="url(#line)" stroke-width="3"/>
+  <path d="M25 21.5H39" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M25 28.5H34" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="32" cy="44" r="1.7" fill="white"/>
+  <path d="M44.5 30.5C48.6421 30.5 52 33.8579 52 38" stroke="#75E5ED" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M45 35C46.6569 35 48 36.3431 48 38" stroke="#75E5ED" stroke-width="2.5" stroke-linecap="round"/>
+</svg>

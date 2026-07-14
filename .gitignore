@@ -1,0 +1,35 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Local environment
+.env
+.env.*
+!.env.example
+runs/
+
+# Virtual environments
+.venv
+
+# Test and tooling caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# IDE and OS metadata
+.vscode/
+.idea/
+.DS_Store
+
+# Local logs and temporary archives
+*.log
+*.tmp
+*.bak
+PhoneAgent-*.zip
+PhoneAgent-*.tar.gz

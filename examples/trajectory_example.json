@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "trajectory_id": "example-open-settings",
+  "task": "打开设置",
+  "status": "completed",
+  "events": [
+    {
+      "type": "observation",
+      "message": "Captured a trusted Android screenshot.",
+      "payload": {"screen_size": [1080, 2400], "foreground_package": "com.android.launcher"}
+    },
+    {
+      "type": "action",
+      "message": "Resolved and launched the Settings application.",
+      "payload": {"action": "Launch", "package": "com.android.settings"}
+    },
+    {
+      "type": "verification",
+      "message": "Target package is foreground.",
+      "payload": {
+        "command_success": true,
+        "observable_effect_verified": true,
+        "semantic_effect_verified": true
+      }
+    },
+    {
+      "type": "finish",
+      "message": "Example task completed.",
+      "payload": {"success": true}
+    }
+  ]
+}

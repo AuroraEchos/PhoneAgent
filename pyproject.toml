@@ -1,0 +1,93 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phoneagent"
+dynamic = ["version"]
+description = "A vision-language Android agent runtime with deterministic app routing, bounded verification, and ADB execution."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Wenhao Liu" },
+]
+keywords = [
+    "android",
+    "agent",
+    "adb",
+    "gui-agent",
+    "vision-language-model",
+    "automation",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = [
+    "openai>=2.44.0,<3",
+    "pillow>=12.2.0,<13",
+    "python-dotenv>=1.0.0,<2",
+]
+
+[project.urls]
+Homepage = "https://github.com/AuroraEchos/PhoneAgent"
+Documentation = "https://auroraechos.github.io/PhoneAgent/"
+Repository = "https://github.com/AuroraEchos/PhoneAgent"
+Issues = "https://github.com/AuroraEchos/PhoneAgent/issues"
+Changelog = "https://github.com/AuroraEchos/PhoneAgent/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2.2,<2",
+    "pytest>=8.3,<10",
+    "pytest-cov>=6,<8",
+    "ruff>=0.12,<1",
+]
+
+[project.scripts]
+phoneagent = "phoneagent.entrypoint:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "phoneagent._version.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["phoneagent*"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.coverage.run]
+branch = true
+source = ["phoneagent"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["phoneagent"]

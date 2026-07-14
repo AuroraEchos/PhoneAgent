@@ -1,0 +1,25 @@
+name: Feature request
+description: Propose a focused capability or reliability improvement
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the concrete limitation or failure mode.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and verification implications
+      description: Explain possible side effects, confirmation requirements, and how success should be verified.
+    validations:
+      required: true

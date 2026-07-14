@@ -1,0 +1,44 @@
+name: Bug report
+description: Report a reproducible PhoneAgent runtime or device issue
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Remove credentials and personal data from screenshots and trajectories before uploading.
+  - type: input
+    id: version
+    attributes:
+      label: PhoneAgent version or commit
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python, adb, Android version, device/vendor, and model
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted trajectory or logs
+      render: shell
