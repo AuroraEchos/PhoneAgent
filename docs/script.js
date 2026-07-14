@@ -16,6 +16,12 @@ const translations = {
     "nav.quickstart": "Quick Start",
     "nav.roadmap": "Roadmap",
     "nav.limitations": "Limitations",
+    "ecosystem.kicker": "Open-source lineage",
+    "ecosystem.description": "Inspired by Open-AutoGLM and recommended with Zhipu BigModel's autoglm-phone API.",
+    "ecosystem.inspiration": "Project inspiration",
+    "provider.kicker": "Recommended provider",
+    "provider.apikey": "Apply on the Zhipu platform",
+    "backToTop": "Back to top",
     "hero.eyebrow": "Open source · v0.1.0 Alpha",
     "hero.titleLine1": "An Android agent runtime",
     "hero.titleLine2": "that can see what it does.",
@@ -121,6 +127,12 @@ const translations = {
     "nav.quickstart": "快速开始",
     "nav.roadmap": "开发路线",
     "nav.limitations": "能力边界",
+    "ecosystem.kicker": "开源项目致谢",
+    "ecosystem.description": "项目早期受到 Open-AutoGLM 启发，并推荐使用智谱 BigModel 的 autoglm-phone API。",
+    "ecosystem.inspiration": "项目启发来源",
+    "provider.kicker": "推荐模型服务",
+    "provider.apikey": "在智谱开放平台申请",
+    "backToTop": "返回顶部",
     "hero.eyebrow": "开源项目 · v0.1.0 Alpha",
     "hero.titleLine1": "一个能够看见执行结果的",
     "hero.titleLine2": "Android Agent Runtime。",
@@ -255,13 +267,14 @@ function readStoredLanguage() {
 
 function writeStoredLanguage(language) {
   try {
-    writeStoredLanguage(language);
+    localStorage.setItem("phoneagent-language", language);
   } catch {
     // Storage can be unavailable in hardened browser contexts. The page still works.
   }
 }
 
-let currentLanguage = readStoredLanguage() || SITE_CONFIG.defaultLanguage;
+const browserLanguage = navigator.language?.toLowerCase().startsWith("zh") ? "zh" : null;
+let currentLanguage = readStoredLanguage() || browserLanguage || SITE_CONFIG.defaultLanguage;
 if (!translations[currentLanguage]) currentLanguage = "en";
 
 function applyLanguage(language) {
@@ -287,6 +300,9 @@ function applyLanguage(language) {
 
   const toast = document.querySelector("[data-toast]");
   if (toast) toast.textContent = translations[language]["toast.copied"];
+
+  const backToTop = document.querySelector("[data-back-to-top]");
+  if (backToTop) backToTop.setAttribute("aria-label", translations[language].backToTop);
 
   writeStoredLanguage(language);
 }
@@ -394,6 +410,136 @@ function showToast() {
   toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 1800);
 }
 
+function setupScrollProgress() {
+  const bar = document.querySelector("[data-scroll-progress]");
+  if (!bar) return;
+
+  const update = () => {
+    const scrollable = document.documentElement.scrollHeight - window.innerHeight;
+    const progress = scrollable > 0 ? Math.min(window.scrollY / scrollable, 1) : 0;
+    bar.style.transform = `scaleX(${progress})`;
+  };
+
+  update();
+  window.addEventListener("scroll", update, { passive: true });
+  window.addEventListener("resize", update, { passive: true });
+}
+
+function setupActiveNavigation() {
+  const links = [...document.querySelectorAll("[data-nav-link]")];
+  if (!links.length || !("IntersectionObserver" in window)) return;
+
+  const sections = links
+    .map((link) => document.querySelector(link.getAttribute("href")))
+    .filter(Boolean);
+
+  const setActive = (id) => {
+    links.forEach((link) => {
+      const active = link.getAttribute("href") === `#${id}`;
+      link.classList.toggle("active", active);
+      if (active) link.setAttribute("aria-current", "location");
+      else link.removeAttribute("aria-current");
+    });
+  };
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (visible?.target?.id) setActive(visible.target.id);
+    },
+    { rootMargin: "-28% 0px -58%", threshold: [0.05, 0.2, 0.45] },
+  );
+
+  sections.forEach((section) => observer.observe(section));
+}
+
+function setupSpotlights() {
+  if (window.matchMedia("(pointer: coarse)").matches) return;
+
+  document.querySelectorAll("[data-spotlight]").forEach((element) => {
+    element.addEventListener("pointermove", (event) => {
+      const rect = element.getBoundingClientRect();
+      element.style.setProperty("--mouse-x", `${event.clientX - rect.left}px`);
+      element.style.setProperty("--mouse-y", `${event.clientY - rect.top}px`);
+      element.classList.add("spotlight-active");
+    });
+    element.addEventListener("pointerleave", () => element.classList.remove("spotlight-active"));
+  });
+}
+
+function setupBackToTop() {
+  const button = document.querySelector("[data-back-to-top]");
+  if (!button) return;
+
+  const update = () => button.classList.toggle("visible", window.scrollY > 720);
+  button.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+  update();
+  window.addEventListener("scroll", update, { passive: true });
+}
+
+function setupRuntimeDemo() {
+  const steps = [...document.querySelectorAll("[data-demo-step]")];
+  if (steps.length < 2) return;
+
+  let processingIndex = steps.length - 1;
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const render = () => {
+    steps.forEach((step, index) => {
+      const indicator = step.querySelector("[data-demo-indicator]");
+      const isDone = index < processingIndex;
+      const isProcessing = index === processingIndex;
+
+      step.classList.toggle("active", isDone);
+      step.classList.toggle("processing", isProcessing);
+      step.classList.toggle("pending", !isDone && !isProcessing);
+
+      if (!indicator) return;
+      indicator.className = "demo-indicator";
+      indicator.textContent = "";
+
+      if (isDone) {
+        indicator.classList.add("step-state");
+        indicator.textContent = "done";
+      } else if (isProcessing) {
+        indicator.classList.add("spinner");
+      } else {
+        indicator.classList.add("step-pending");
+        indicator.textContent = "·";
+      }
+    });
+  };
+
+  render();
+  if (reducedMotion) return;
+
+  window.setInterval(() => {
+    processingIndex = (processingIndex + 1) % steps.length;
+    render();
+  }, 1800);
+}
+
+function setupHeroParallax() {
+  const visual = document.querySelector(".hero-visual");
+  const phone = document.querySelector(".phone-frame");
+  if (!visual || !phone || window.matchMedia("(pointer: coarse)").matches || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+  visual.addEventListener("pointermove", (event) => {
+    const rect = visual.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / rect.width - 0.5;
+    const y = (event.clientY - rect.top) / rect.height - 0.5;
+    phone.style.setProperty("--parallax-x", `${x * 7}deg`);
+    phone.style.setProperty("--parallax-y", `${y * -4}deg`);
+  });
+
+  visual.addEventListener("pointerleave", () => {
+    phone.style.removeProperty("--parallax-x");
+    phone.style.removeProperty("--parallax-y");
+  });
+}
+
 function setupCurrentYear() {
   document.querySelectorAll("[data-current-year]").forEach((element) => {
     element.textContent = String(new Date().getFullYear());
@@ -405,6 +551,12 @@ applyLanguage(currentLanguage);
 setupLanguageToggle();
 setupHeader();
 setupNavigation();
+setupScrollProgress();
+setupActiveNavigation();
+setupSpotlights();
+setupBackToTop();
+setupRuntimeDemo();
+setupHeroParallax();
 setupRevealAnimations();
 setupCopyButtons();
 setupCurrentYear();

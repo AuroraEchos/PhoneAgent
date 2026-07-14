@@ -1,161 +1,295 @@
 # PhoneAgent
 
+
+
+[![CI](https://github.com/AuroraEchos/PhoneAgent/actions/workflows/ci.yml/badge.svg)](https://github.com/AuroraEchos/PhoneAgent/actions/workflows/ci.yml)
+
+[![Release](https://img.shields.io/github/v/release/AuroraEchos/PhoneAgent)](https://github.com/AuroraEchos/PhoneAgent/releases)
+
+[![License](https://img.shields.io/github/license/AuroraEchos/PhoneAgent)](LICENSE)
+
 [简体中文](README.md) | English
 
-[Project website](https://auroraechos.github.io/PhoneAgent/) · [GitHub](https://github.com/AuroraEchos/PhoneAgent) · [Release](https://github.com/AuroraEchos/PhoneAgent/releases/tag/v0.1.0)
+[项目主页](https://auroraechos.github.io/PhoneAgent/) · [GitHub](https://github.com/AuroraEchos/PhoneAgent)
 
-PhoneAgent is a lightweight vision-language agent runtime for real Android devices. It captures the current screen through ADB, asks an OpenAI-compatible vision-language model for one constrained action, executes that action, verifies observable effects, and applies bounded recovery when necessary.
+PhoneAgent is a面向真实 Android 设备的vision-language agent runtime（Vision-Language Agent Runtime）。
+
+它通过屏幕观察、视觉语言模型推理、结构化动作执行和结果验证，让用户可以使用自然语言控制手机完成任务。
+
+核心执行流程：
 
 ```text
-Observe -> Plan -> Execute -> Verify -> Recover/Replan -> Repeat
+Observe → Plan → Execute → Verify → Recover → Repeat
 ```
 
-The first public release, `v0.1.0`, focuses on a small, auditable, and testable execution loop rather than a large orchestration framework.
+PhoneAgent 当前定位为一个开源研究与工程原型，重点探索可靠、可审计的手机 GUI Agent 执行链路。
 
-## Highlights
+## 核心能力
 
-- Screenshot-driven VLM planning.
-- AST/JSON-based safe action parsing; model text is never evaluated as Python.
-- Dynamic discovery of launchable packages and confidence-aware app resolution.
-- Deterministic package/activity launch for high-confidence pure-open tasks.
-- Explicit distinction between command success, observable effects, and semantic action verification.
-- Bounded recovery that never blindly replays `Tap`, `Type`, `Back`, `Swipe`, or other potentially side-effecting actions.
-- Atomic JSON trajectory recording for observations, actions, verification, recovery, metrics, and state transitions.
-- Manual takeover for protected, login, password, verification-code, and other sensitive screens.
+- 基于截图的视觉理解和任务规划。
+- 使用结构化 Action Protocol 执行动作，而不是执行模型生成代码。
+- 支持 Android 应用发现和确定性启动。
+- 支持动作执行后的状态验证。
+- 支持有限恢复和重新规划。
+- 自动记录 Agent 执行轨迹，方便调试和分析。
 
-## Scope and limitations
+## 致谢
 
-PhoneAgent is currently an **ADB-based research and engineering prototype**, not an on-device consumer product.
+PhoneAgent 的早期开发受到开源项目 [zai-org/Open-AutoGLM](https://github.com/zai-org/Open-AutoGLM) 的启发。
 
-- For coordinate actions such as `Tap`, `Swipe`, and `Type`, a visual change proves only an observable effect. It does not prove that the model selected the semantically correct UI target.
-- Overall task completion is currently self-reported by the planning model through `finish(...)`; there is no independent task judge yet.
-- Screens protected by DRM, `FLAG_SECURE`, or vendor restrictions may not be observable. PhoneAgent refuses to guess coordinates on an untrusted blank screen.
-- Launcher search fallback is vendor-dependent and is accepted only when a real foreground or visual change is observed.
-- On-device deployment still requires an Android application built around `AccessibilityService`, `MediaProjection`, foreground services, explicit user controls, and privacy safeguards.
+感谢智谱 AI 团队开源 Open-AutoGLM，并提供了面向手机 Agent 的探索方向。
 
-See [Architecture](docs/ARCHITECTURE.md) for the implemented execution path and [v0.1.0 Release Notes](RELEASE_NOTES_v0.1.0.md) for the first public release. See [GitHub Public Release Guide](docs/GITHUB_PUBLISH_GUIDE.md) for repository publication steps.
+同时，PhoneAgent 推荐使用智谱 BigModel 提供的视觉语言模型作为默认推理服务。
 
-## Requirements
+## 环境要求
 
-- Linux (primarily developed and tested on Ubuntu)
+目前推荐环境：
+
+- Ubuntu Linux
 - Python 3.12+
-- Android Platform Tools / `adb`
-- An Android device with USB debugging enabled
-- An image-capable model exposed through an OpenAI-compatible Chat Completions API
-- [ADB Keyboard](https://github.com/senzhk/ADBKeyBoard) is recommended for robust CJK and special-character input
+- Android Platform Tools (`adb`)
+- 一台开启 USB 调试的 Android 手机
+- 一个支持视觉输入的 VLM API
 
-## Installation
+## Android 设备准备
+
+### 1. 安装 ADB
+
+Ubuntu:
+
+```bash
+sudo apt install adb
+```
+
+检查：
+
+```bash
+adb version
+```
+
+如果输出类似：
+
+```text
+Android Debug Bridge version 1.0.xx
+```
+
+说明安装成功。
+
+### 2. 开启手机 USB 调试
+
+手机：
+
+```
+设置
+ → 关于手机
+ → 连续点击版本号 7 次
+ → 开发者选项
+ → 开启 USB 调试
+```
+
+连接手机：
+
+```bash
+adb devices
+```
+
+第一次连接时，需要在手机上允许 USB 调试授权。
+
+正常输出：
+
+```text
+List of devices attached
+
+xxxxxxxx	device
+```
+
+说明 PhoneAgent 可以访问设备。
+
+### 3. 安装 ADB Keyboard（推荐）
+
+PhoneAgent 推荐安装：
+
+https://github.com/senzhk/ADBKeyBoard
+
+用于稳定输入：
+
+- 中文
+- 特殊字符
+- 长文本
+
+## 安装 PhoneAgent
+
+推荐使用 uv：
+
+安装 uv：
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+下载项目：
 
 ```bash
 git clone https://github.com/AuroraEchos/PhoneAgent.git
+
 cd PhoneAgent
+```
+
+安装依赖：
+
+```bash
 uv sync --extra dev
+```
+
+创建配置：
+
+```bash
 cp .env.example .env
 ```
 
-Configure the model endpoint:
+## 配置模型 API
+
+PhoneAgent 兼容 OpenAI Chat Completions API。
+
+推荐使用：
+
+### 智谱 BigModel
+
+文档：
+
+https://docs.bigmodel.cn/cn/api/introduction
+
+配置：
 
 ```dotenv
-PHONE_AGENT_BASE_URL=http://localhost:8000/v1
-PHONE_AGENT_MODEL=your-vision-language-model
-PHONE_AGENT_API_KEY=EMPTY
-PHONE_AGENT_DEVICE_ID=
+PHONE_AGENT_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+PHONE_AGENT_MODEL=autoglm-phone
+PHONE_AGENT_API_KEY=你的API_KEY
 ```
 
-## Usage
+API Key 可以在智谱开放平台申请。
+
+## 检查安装
+
+查看版本：
+
+```bash
+uv run phoneagent --version
+```
+
+查看帮助：
+
+```bash
+uv run phoneagent --help
+```
+
+检查设备：
 
 ```bash
 uv run phoneagent --list-devices
+```
+
+查看可启动应用：
+
+```bash
 uv run phoneagent --list-apps
+```
+
+## 基本使用
+
+简单任务：
+
+```bash
 uv run phoneagent "打开设置"
+```
+
+多步骤任务：
+
+```bash
 uv run phoneagent "打开微信，然后搜索联系人张三"
 ```
 
-For multiple devices:
+指定设备：
 
 ```bash
-uv run phoneagent --device-id emulator-5554 "open Chrome and search for PhoneAgent"
+uv run phoneagent \
+  --device-id YOUR_DEVICE_ID \
+  "打开浏览器搜索 PhoneAgent"
 ```
 
-## Verification model
+## 应用别名
 
-A verification record separates three facts:
+部分 Android 系统无法稳定获取应用显示名称。
+
+可以通过 alias 文件：
 
 ```json
 {
-  "command_success": true,
-  "observable_effect_verified": true,
-  "semantic_effect_verified": null
+  "微信": "com.tencent.mm",
+  "淘宝": "com.taobao.taobao"
 }
 ```
 
-- `command_success`: the Android/ADB execution layer accepted the command.
-- `observable_effect_verified`: a foreground-app or visual change was observed.
-- `semantic_effect_verified`: deterministic system state proves the action-level semantic result, for example the requested package is now foreground.
-
-For ordinary coordinate actions, semantic verification is usually `null`.
-
-## App aliases
-
-When Android cannot expose a stable human-readable label, provide a JSON alias file:
-
-```json
-{
-  "LeetCode": "com.lingkou.leetcode",
-  "Camera": "com.example.camera"
-}
-```
-
-or:
-
-```json
-{
-  "com.lingkou.leetcode": ["LeetCode", "力扣"]
-}
-```
+运行：
 
 ```bash
-uv run phoneagent --app-aliases-file app_aliases.json "open LeetCode"
+uv run phoneagent \
+  --app-aliases-file app_aliases.json \
+  "打开微信"
 ```
 
-## Programmatic API
+## Python API
 
 ```python
-from phoneagent import AgentConfig, PhoneAgent, RecoveryConfig, VerificationConfig
+from phoneagent import PhoneAgent
 
-agent = PhoneAgent(
-    agent_config=AgentConfig(
-        verification=VerificationConfig(enabled=True),
-        recovery=RecoveryConfig(
-            enabled=True,
-            allow_backtrack=False,
-            allow_home_reset=False,
-        ),
-    )
+agent = PhoneAgent()
+
+result = agent.run(
+    "打开设置并进入 Wi-Fi 页面"
 )
 
-print(agent.run("open Settings and navigate to Wi-Fi"))
-print(agent.state.last_verification)
-print(agent.last_trajectory_path)
+print(result)
 ```
 
-Importing `phoneagent` does not load `.env`, inspect devices, or initialize a model client. The console entry point explicitly loads local environment configuration before importing runtime modules.
+## 轨迹记录
 
-## Development
+每次运行会生成：
+
+```text
+runs/trajectory_xxxxx.json
+```
+
+记录：
+
+- 当前状态
+- 模型请求
+- Agent 动作
+- 执行结果
+- 验证信息
+- 恢复过程
+
+方便调试和研究。
+
+## 开发
 
 ```bash
 uv sync --extra dev
+
 uv run pytest -q
+
 uv run ruff check .
-uv run python -m build
 ```
 
-## Security
+## 当前限制
 
-PhoneAgent can operate a real device and may trigger external side effects. Do not use it unsupervised for payments, transfers, destructive operations, sensitive messages, or other high-risk workflows.
+PhoneAgent 当前仍然是研究原型：
 
-See [SECURITY.md](SECURITY.md) for reporting guidance.
+- 需要通过 ADB 连接 Android 设备。
+- 部分应用需要配置 alias。
+- 坐标点击的语义正确性仍依赖视觉模型。
+- 尚未完成 Android 原生端侧部署。
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+Apache License 2.0

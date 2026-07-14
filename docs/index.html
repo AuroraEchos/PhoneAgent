@@ -27,6 +27,7 @@
   <script src="script.js" defer></script>
 </head>
 <body>
+  <div class="scroll-progress" aria-hidden="true"><span data-scroll-progress></span></div>
   <a class="skip-link" href="#main">Skip to content</a>
 
   <div class="page-noise" aria-hidden="true"></div>
@@ -39,6 +40,7 @@
         <img src="assets/logo.svg" alt="" width="34" height="34">
         <span>PhoneAgent</span>
       </a>
+      <span class="header-release" aria-label="Current release">v0.1.0</span>
 
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" data-nav-toggle>
         <span class="sr-only">Open navigation</span>
@@ -46,11 +48,11 @@
       </button>
 
       <nav class="site-nav" id="site-nav" aria-label="Primary navigation" data-nav>
-        <a href="#features" data-i18n="nav.features">Features</a>
-        <a href="#architecture" data-i18n="nav.architecture">Architecture</a>
-        <a href="#quickstart" data-i18n="nav.quickstart">Quick Start</a>
-        <a href="#roadmap" data-i18n="nav.roadmap">Roadmap</a>
-        <a href="#limitations" data-i18n="nav.limitations">Limitations</a>
+        <a href="#features" data-nav-link data-i18n="nav.features">Features</a>
+        <a href="#architecture" data-nav-link data-i18n="nav.architecture">Architecture</a>
+        <a href="#quickstart" data-nav-link data-i18n="nav.quickstart">Quick Start</a>
+        <a href="#roadmap" data-nav-link data-i18n="nav.roadmap">Roadmap</a>
+        <a href="#limitations" data-nav-link data-i18n="nav.limitations">Limitations</a>
       </nav>
 
       <div class="nav-actions">
@@ -106,6 +108,8 @@
         <div class="hero-visual reveal reveal-delay-1" aria-label="PhoneAgent execution demo">
           <div class="demo-orbit orbit-one" aria-hidden="true"></div>
           <div class="demo-orbit orbit-two" aria-hidden="true"></div>
+          <div class="runtime-signal signal-one" aria-hidden="true"><i></i></div>
+          <div class="runtime-signal signal-two" aria-hidden="true"><i></i></div>
 
           <div class="runtime-card runtime-card-top" aria-hidden="true">
             <span class="runtime-icon runtime-icon-observe">
@@ -138,10 +142,10 @@
                   </div>
 
                   <div class="loop-stack" aria-hidden="true">
-                    <div class="loop-row active"><span class="step-number">01</span><div><b>Observe</b><small>Screenshot captured</small></div><span class="step-state">done</span></div>
-                    <div class="loop-row active"><span class="step-number">02</span><div><b>Plan</b><small>Resolve Settings</small></div><span class="step-state">done</span></div>
-                    <div class="loop-row active"><span class="step-number">03</span><div><b>Execute</b><small>Launch package</small></div><span class="step-state">done</span></div>
-                    <div class="loop-row processing"><span class="step-number">04</span><div><b>Verify</b><small>Foreground package</small></div><span class="spinner"></span></div>
+                    <div class="loop-row active" data-demo-step><span class="step-number">01</span><div><b>Observe</b><small>Screenshot captured</small></div><span class="demo-indicator" data-demo-indicator></span></div>
+                    <div class="loop-row active" data-demo-step><span class="step-number">02</span><div><b>Plan</b><small>Resolve Settings</small></div><span class="demo-indicator" data-demo-indicator></span></div>
+                    <div class="loop-row active" data-demo-step><span class="step-number">03</span><div><b>Execute</b><small>Launch package</small></div><span class="demo-indicator" data-demo-indicator></span></div>
+                    <div class="loop-row processing" data-demo-step><span class="step-number">04</span><div><b>Verify</b><small>Foreground package</small></div><span class="demo-indicator" data-demo-indicator></span></div>
                   </div>
 
                   <div class="action-console" aria-hidden="true">
@@ -172,6 +176,23 @@
         <div><span>04</span><b>Verify</b></div><i></i>
         <div><span>05</span><b>Recover / Replan</b></div>
       </div>
+
+      <div class="container ecosystem-strip reveal reveal-delay-2" data-spotlight>
+        <div class="ecosystem-copy">
+          <span class="ecosystem-kicker" data-i18n="ecosystem.kicker">Open-source lineage</span>
+          <p data-i18n="ecosystem.description">Inspired by Open-AutoGLM and recommended with Zhipu BigModel's autoglm-phone API.</p>
+        </div>
+        <div class="ecosystem-links">
+          <a href="https://github.com/zai-org/Open-AutoGLM" target="_blank" rel="noreferrer">
+            <span class="ecosystem-mark">OA</span>
+            <span><b>Open-AutoGLM</b><small data-i18n="ecosystem.inspiration">Project inspiration</small></span>
+          </a>
+          <a href="https://docs.bigmodel.cn/cn/api/introduction" target="_blank" rel="noreferrer">
+            <span class="ecosystem-mark ecosystem-mark-zhipu">Z</span>
+            <span><b>Zhipu BigModel</b><small>autoglm-phone</small></span>
+          </a>
+        </div>
+      </div>
     </section>
 
     <section class="section section-soft" id="features">
@@ -183,7 +204,7 @@
         </div>
 
         <div class="feature-grid">
-          <article class="feature-card feature-card-wide reveal">
+          <article class="feature-card feature-card-wide reveal" data-spotlight>
             <div class="feature-icon feature-violet">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>
             </div>
@@ -198,7 +219,7 @@
             </div>
           </article>
 
-          <article class="feature-card reveal reveal-delay-1">
+          <article class="feature-card reveal reveal-delay-1" data-spotlight>
             <div class="feature-icon feature-blue">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 9 4 12l4 3M16 9l4 3-4 3M14 5l-4 14"/></svg>
             </div>
@@ -208,7 +229,7 @@
             <code class="inline-code">do(action="Tap", element=[512, 438])</code>
           </article>
 
-          <article class="feature-card reveal reveal-delay-2">
+          <article class="feature-card reveal reveal-delay-2" data-spotlight>
             <div class="feature-icon feature-cyan">
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 7h8M8 11h5M8 15h8"/></svg>
             </div>
@@ -218,7 +239,7 @@
             <div class="route-line" aria-hidden="true"><span>微信</span><i>→</i><strong>com.tencent.mm</strong></div>
           </article>
 
-          <article class="feature-card reveal">
+          <article class="feature-card reveal" data-spotlight>
             <div class="feature-icon feature-green">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/><path d="M20 12a8 8 0 1 1-4-6.9"/></svg>
             </div>
@@ -228,7 +249,7 @@
             <div class="verify-tags" aria-hidden="true"><span>command ✓</span><span>observable ✓</span><span>semantic —</span></div>
           </article>
 
-          <article class="feature-card reveal reveal-delay-1">
+          <article class="feature-card reveal reveal-delay-1" data-spotlight>
             <div class="feature-icon feature-orange">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>
             </div>
@@ -238,7 +259,7 @@
             <div class="budget-meter" aria-hidden="true"><span></span><span></span><span></span><span class="unused"></span><span class="unused"></span></div>
           </article>
 
-          <article class="feature-card reveal reveal-delay-2">
+          <article class="feature-card reveal reveal-delay-2" data-spotlight>
             <div class="feature-icon feature-pink">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
             </div>
@@ -270,7 +291,7 @@
           </a>
         </div>
 
-        <div class="architecture-diagram reveal reveal-delay-1" role="img" aria-label="PhoneAgent architecture diagram">
+        <div class="architecture-diagram reveal reveal-delay-1" data-spotlight role="img" aria-label="PhoneAgent architecture diagram">
           <div class="diagram-glow" aria-hidden="true"></div>
           <div class="diagram-node node-user"><span class="node-icon">U</span><div><b>User Task</b><small>Natural language goal</small></div></div>
           <div class="diagram-connector connector-vertical"><i></i></div>
@@ -304,7 +325,7 @@
             <article><span>03</span><div><h3 data-i18n="quickstart.step3.title">Run a task</h3><p data-i18n="quickstart.step3.description">Start with deterministic application launch, then move to multi-step visual tasks.</p></div></article>
           </div>
 
-          <div class="terminal-card reveal reveal-delay-1">
+          <div class="terminal-card reveal reveal-delay-1" data-spotlight>
             <div class="terminal-titlebar">
               <div><span></span><span></span><span></span></div>
               <strong>terminal</strong>
@@ -329,6 +350,19 @@
               <span data-i18n="quickstart.result">Runtime started · device connected · task initialized</span>
             </div>
           </div>
+
+          <aside class="provider-card reveal reveal-delay-2" data-spotlight>
+            <div class="provider-head">
+              <span class="provider-logo">Z</span>
+              <div><span data-i18n="provider.kicker">Recommended provider</span><b>Zhipu BigModel</b></div>
+              <a href="https://docs.bigmodel.cn/cn/api/introduction" target="_blank" rel="noreferrer" aria-label="Open Zhipu BigModel documentation">↗</a>
+            </div>
+            <div class="provider-config">
+              <div><span>base-url</span><code>https://open.bigmodel.cn/api/paas/v4</code></div>
+              <div><span>model</span><code>autoglm-phone</code></div>
+              <div><span>apikey</span><code data-i18n="provider.apikey">Apply on the Zhipu platform</code></div>
+            </div>
+          </aside>
         </div>
 
         <div class="requirements-strip reveal reveal-delay-2">
@@ -343,7 +377,7 @@
     <section class="section" id="trajectory">
       <div class="container trajectory-grid">
         <div class="trajectory-visual reveal">
-          <div class="json-window">
+          <div class="json-window" data-spotlight>
             <div class="json-titlebar"><div><span></span><span></span><span></span></div><strong>trajectory_028846c0.json</strong><em>schema 1.0</em></div>
             <pre><code>{
   <span class="json-key">"type"</span>: <span class="json-string">"verification"</span>,
@@ -385,21 +419,21 @@
         </div>
 
         <div class="roadmap-board reveal reveal-delay-1">
-          <div class="roadmap-column complete">
+          <div class="roadmap-column complete" data-spotlight>
             <div class="roadmap-column-head"><span></span><div><b data-i18n="roadmap.complete">Released</b><small>v0.1.0</small></div></div>
             <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item1.title">Vision agent loop</b><small data-i18n="roadmap.item1.description">Observe, plan, execute, verify, recover.</small></p></div>
             <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item2.title">Android app resolver</b><small data-i18n="roadmap.item2.description">Discovery, aliases, package launch.</small></p></div>
             <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item3.title">Safe action runtime</b><small data-i18n="roadmap.item3.description">Validation, confirmation, bounded recovery.</small></p></div>
           </div>
 
-          <div class="roadmap-column next">
+          <div class="roadmap-column next" data-spotlight>
             <div class="roadmap-column-head"><span></span><div><b data-i18n="roadmap.next">Next</b><small>v0.x</small></div></div>
             <div class="roadmap-card"><span>→</span><p><b data-i18n="roadmap.item4.title">Semantic verification</b><small data-i18n="roadmap.item4.description">Subgoal-aware evidence and independent review.</small></p></div>
             <div class="roadmap-card"><span>→</span><p><b data-i18n="roadmap.item5.title">Evaluation harness</b><small data-i18n="roadmap.item5.description">Task suites, replay, metrics, and regression.</small></p></div>
             <div class="roadmap-card"><span>→</span><p><b data-i18n="roadmap.item6.title">Provider abstraction</b><small data-i18n="roadmap.item6.description">More local and hosted VLM backends.</small></p></div>
           </div>
 
-          <div class="roadmap-column future">
+          <div class="roadmap-column future" data-spotlight>
             <div class="roadmap-column-head"><span></span><div><b data-i18n="roadmap.future">Longer term</b><small>Research</small></div></div>
             <div class="roadmap-card"><span>◇</span><p><b data-i18n="roadmap.item7.title">On-device runtime</b><small data-i18n="roadmap.item7.description">Accessibility, MediaProjection, privacy controls.</small></p></div>
             <div class="roadmap-card"><span>◇</span><p><b data-i18n="roadmap.item8.title">Experience learning</b><small data-i18n="roadmap.item8.description">Reusable app knowledge from trajectories.</small></p></div>
@@ -460,6 +494,9 @@
     </div>
   </footer>
 
+  <button class="back-to-top" type="button" data-back-to-top aria-label="Back to top">
+    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 14 6-6 6 6"/></svg>
+  </button>
   <div class="toast" role="status" aria-live="polite" data-toast>Copied to clipboard</div>
 </body>
 </html>
