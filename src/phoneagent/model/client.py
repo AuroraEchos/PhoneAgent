@@ -246,7 +246,7 @@ class ModelClient:
     def __init__(self, config: ModelConfig | None = None):
         self.config = config or ModelConfig()
         try:
-            from openai import OpenAI
+            from openai import OpenAI, DefaultHttpxClient
         except ImportError as exc:
             raise RuntimeError(
                 "The openai package is required. Install dependencies with: pip install -e ."
@@ -255,6 +255,7 @@ class ModelClient:
             base_url=self.config.base_url,
             api_key=self.config.api_key,
             timeout=self.config.timeout,
+            http_client=DefaultHttpxClient(trust_env=False)
         )
         self.boundary_detector = StreamingBoundaryDetector(
             markers=("<answer>", "do(", "finish(")

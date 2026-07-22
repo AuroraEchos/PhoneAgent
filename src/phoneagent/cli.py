@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
         epilog="""
 Examples:
   phoneagent "打开设置并查看 Wi-Fi 页面"
-  phoneagent --device-id emulator-5554 "打开 Chrome 搜索 LangGraph"
+  phoneagent --device-id emulator-5554 "打开浏览器搜索 LangGraph"
   phoneagent --connect 192.168.1.100:5555
   phoneagent --enable-tcpip 5555
   phoneagent --list-devices
@@ -314,12 +314,13 @@ def check_model_api(config: ModelConfig) -> bool:
     print(f"  Base URL: {config.base_url}")
     print(f"  Model:    {config.model_name}")
     try:
-        from openai import OpenAI
+        from openai import OpenAI, DefaultHttpxClient
 
         client = OpenAI(
             base_url=config.base_url,
             api_key=config.api_key,
             timeout=min(config.timeout, 30.0),
+            http_client=DefaultHttpxClient(trust_env=False)
         )
         response = client.chat.completions.create(
             model=config.model_name,

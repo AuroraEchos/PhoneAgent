@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#080b12">
-  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#f4f0e8">
+  <meta name="color-scheme" content="light">
 
   <title>PhoneAgent — Vision-Driven Android Agent Runtime</title>
   <meta name="description" content="PhoneAgent is an open-source, vision-driven Android agent runtime with deterministic app routing, safe structured actions, post-action verification, bounded recovery, and auditable trajectories.">
@@ -138,19 +138,19 @@
 
                   <div class="task-card">
                     <span class="task-label">USER TASK</span>
-                    <p data-i18n="demo.task">Open Settings and find Battery.</p>
+                    <p data-i18n="demo.task">Open WeChat and order a coffee in Meituan.</p>
                   </div>
 
                   <div class="loop-stack" aria-hidden="true">
                     <div class="loop-row active" data-demo-step><span class="step-number">01</span><div><b>Observe</b><small>Screenshot captured</small></div><span class="demo-indicator" data-demo-indicator></span></div>
-                    <div class="loop-row active" data-demo-step><span class="step-number">02</span><div><b>Plan</b><small>Resolve Settings</small></div><span class="demo-indicator" data-demo-indicator></span></div>
-                    <div class="loop-row active" data-demo-step><span class="step-number">03</span><div><b>Execute</b><small>Launch package</small></div><span class="demo-indicator" data-demo-indicator></span></div>
-                    <div class="loop-row processing" data-demo-step><span class="step-number">04</span><div><b>Verify</b><small>Foreground package</small></div><span class="demo-indicator" data-demo-indicator></span></div>
+                    <div class="loop-row active" data-demo-step><span class="step-number">02</span><div><b>Plan</b><small>Propose one action</small></div><span class="demo-indicator" data-demo-indicator></span></div>
+                    <div class="loop-row active" data-demo-step><span class="step-number">03</span><div><b>Execute</b><small>Launch WeChat</small></div><span class="demo-indicator" data-demo-indicator></span></div>
+                    <div class="loop-row processing" data-demo-step><span class="step-number">04</span><div><b>Verify</b><small>Match foreground package</small></div><span class="demo-indicator" data-demo-indicator></span></div>
                   </div>
 
                   <div class="action-console" aria-hidden="true">
                     <div class="console-head"><span></span><span></span><span></span><em>action</em></div>
-                    <code>do(action="Launch", app="设置")</code>
+                    <code>do(action="Launch", app="微信")</code>
                   </div>
                 </div>
 
@@ -163,8 +163,8 @@
             <span class="runtime-icon runtime-icon-verify">
               <svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>
             </span>
-            <div><b>Semantic verification</b><span>Package matched</span></div>
-            <span class="confidence">0.99</span>
+            <div><b>Launch verified</b><span>Foreground: com.tencent.mm</span></div>
+            <span class="confidence">passed</span>
           </div>
         </div>
       </div>
@@ -204,69 +204,79 @@
         </div>
 
         <div class="feature-grid">
-          <article class="feature-card feature-card-wide reveal" data-spotlight>
+          <article class="feature-card reveal">
+            <span class="feature-number">01</span>
             <div class="feature-icon feature-violet">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>
             </div>
-            <div>
-              <span class="feature-number">01</span>
+            <div class="feature-copy">
               <h3 data-i18n="features.vision.title">Vision-first grounding</h3>
               <p data-i18n="features.vision.description">The planner reasons from the current screenshot instead of requiring an accessibility tree, enabling interaction with text, icons, and visually defined controls.</p>
             </div>
-            <div class="mini-grounding" aria-hidden="true">
+            <div class="mini-grounding feature-detail" aria-hidden="true">
               <div class="grounding-screen"><span class="ground-box box-one"></span><span class="ground-box box-two"></span><span class="ground-target"></span></div>
               <div class="grounding-label"><span></span> target · 0.96</div>
             </div>
           </article>
 
-          <article class="feature-card reveal reveal-delay-1" data-spotlight>
+          <article class="feature-card reveal reveal-delay-1">
+            <span class="feature-number">02</span>
             <div class="feature-icon feature-blue">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 9 4 12l4 3M16 9l4 3-4 3M14 5l-4 14"/></svg>
             </div>
-            <span class="feature-number">02</span>
-            <h3 data-i18n="features.protocol.title">Safe action protocol</h3>
-            <p data-i18n="features.protocol.description">Model output is parsed through AST/JSON and validated against an action allow-list. Generated text is never executed as Python code.</p>
-            <code class="inline-code">do(action="Tap", element=[512, 438])</code>
+            <div class="feature-copy">
+              <h3 data-i18n="features.protocol.title">Safe action protocol</h3>
+              <p data-i18n="features.protocol.description">Model output is parsed through AST/JSON and validated against an action allow-list. Generated text is never executed as Python code; actions marked or detected as sensitive require confirmation.</p>
+            </div>
+            <code class="inline-code feature-detail">do(action="Tap", element=[512, 438])</code>
           </article>
 
-          <article class="feature-card reveal reveal-delay-2" data-spotlight>
+          <article class="feature-card reveal reveal-delay-2">
+            <span class="feature-number">03</span>
             <div class="feature-icon feature-cyan">
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 7h8M8 11h5M8 15h8"/></svg>
             </div>
-            <span class="feature-number">03</span>
-            <h3 data-i18n="features.resolver.title">Deterministic app routing</h3>
-            <p data-i18n="features.resolver.description">Discover Launcher activities, resolve aliases, and prefer package/activity launch before falling back to visual navigation.</p>
-            <div class="route-line" aria-hidden="true"><span>微信</span><i>→</i><strong>com.tencent.mm</strong></div>
+            <div class="feature-copy">
+              <h3 data-i18n="features.resolver.title">Deterministic app routing</h3>
+              <p data-i18n="features.resolver.description">Discover Launcher activities and resolve aliases. High-confidence pure launch tasks can bypass the VLM; multi-step tasks receive app context and continue through the visual loop.</p>
+            </div>
+            <div class="route-line feature-detail" aria-hidden="true"><span>微信</span><i>→</i><strong>com.tencent.mm</strong></div>
           </article>
 
-          <article class="feature-card reveal" data-spotlight>
+          <article class="feature-card reveal">
+            <span class="feature-number">04</span>
             <div class="feature-icon feature-green">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/><path d="M20 12a8 8 0 1 1-4-6.9"/></svg>
             </div>
-            <span class="feature-number">04</span>
-            <h3 data-i18n="features.verify.title">Evidence-aware verification</h3>
-            <p data-i18n="features.verify.description">Separate command success, observable UI change, and deterministic semantic evidence instead of collapsing them into one success flag.</p>
-            <div class="verify-tags" aria-hidden="true"><span>command ✓</span><span>observable ✓</span><span>semantic —</span></div>
+            <div class="feature-copy">
+              <h3 data-i18n="features.verify.title">Evidence-aware verification</h3>
+              <p data-i18n="features.verify.description">Separate command success, observable UI change, and deterministic semantic evidence instead of collapsing them into one success flag.</p>
+            </div>
+            <div class="verify-tags feature-detail" aria-hidden="true"><span>command ✓</span><span>observable ✓</span><span>semantic —</span></div>
           </article>
 
-          <article class="feature-card reveal reveal-delay-1" data-spotlight>
+          <article class="feature-card reveal reveal-delay-1">
+            <span class="feature-number">05</span>
             <div class="feature-icon feature-orange">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>
             </div>
-            <span class="feature-number">05</span>
-            <h3 data-i18n="features.recovery.title">Bounded recovery</h3>
-            <p data-i18n="features.recovery.description">Failure episodes have explicit budgets. Non-idempotent actions such as Tap, Type, Swipe, and Back are never blindly replayed.</p>
-            <div class="budget-meter" aria-hidden="true"><span></span><span></span><span></span><span class="unused"></span><span class="unused"></span></div>
+            <div class="feature-copy">
+              <h3 data-i18n="features.recovery.title">Bounded recovery</h3>
+              <p data-i18n="features.recovery.description">Failure episodes have explicit budgets. Non-idempotent actions such as Tap, Type, Swipe, and Back are never blindly replayed.</p>
+            </div>
+            <div class="budget-meter feature-detail" aria-hidden="true"><span></span><span></span><span></span><span class="unused"></span><span class="unused"></span></div>
           </article>
 
-          <article class="feature-card reveal reveal-delay-2" data-spotlight>
+          <article class="feature-card reveal reveal-delay-2">
+            <span class="feature-number">06</span>
             <div class="feature-icon feature-pink">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
             </div>
-            <span class="feature-number">06</span>
-            <h3 data-i18n="features.trajectory.title">Auditable trajectories</h3>
-            <p data-i18n="features.trajectory.description">Persist observations, model responses, actions, execution evidence, verification, recovery decisions, state transitions, and final results.</p>
-            <div class="trajectory-lines" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+            <div class="feature-copy">
+              <h3 data-i18n="features.trajectory.title">Auditable trajectories</h3>
+              <p data-i18n="features.trajectory.description">Persist observation metadata, model responses, actions, execution evidence, verification, recovery decisions, state transitions, and final results.</p>
+            </div>
+            <div class="trajectory-lines feature-detail" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
           </article>
         </div>
       </div>
@@ -277,12 +287,12 @@
         <div class="architecture-copy reveal">
           <span class="section-kicker" data-i18n="architecture.kicker">Architecture</span>
           <h2 data-i18n="architecture.title">Deterministic where possible. Visual where necessary.</h2>
-          <p data-i18n="architecture.description">PhoneAgent does not force every operation through a vision model. It combines Android system capabilities with a visual planning loop, then records evidence at each boundary.</p>
+          <p data-i18n="architecture.description">Only a high-confidence pure open-app goal takes the deterministic launch shortcut. Other tasks follow an explicit observe, plan, execute, verify, and recover state machine.</p>
 
           <div class="architecture-points">
-            <div><span>01</span><p><b data-i18n="architecture.point1.title">Fast path</b><small data-i18n="architecture.point1.description">Resolve and launch installed applications through package/activity state.</small></p></div>
-            <div><span>02</span><p><b data-i18n="architecture.point2.title">General path</b><small data-i18n="architecture.point2.description">Use the screenshot and task context to plan navigation inside an application.</small></p></div>
-            <div><span>03</span><p><b data-i18n="architecture.point3.title">Evidence path</b><small data-i18n="architecture.point3.description">Verify observable or deterministic effects before continuing or recovering.</small></p></div>
+            <div><span>01</span><p><b data-i18n="architecture.point1.title">App-aware initialization</b><small data-i18n="architecture.point1.description">Discover Launcher activities, apply aliases, and provide likely goal apps to the planner.</small></p></div>
+            <div><span>02</span><p><b data-i18n="architecture.point2.title">One-action loop</b><small data-i18n="architecture.point2.description">Observe a screenshot, request one model action, validate it, and dispatch it to the action handler and ADB device layer.</small></p></div>
+            <div><span>03</span><p><b data-i18n="architecture.point3.title">Evidence and recovery</b><small data-i18n="architecture.point3.description">Verify the result, then continue, replan, or retry only safe actions within explicit budgets.</small></p></div>
           </div>
 
           <a class="text-link" data-link="architecture" href="#" target="_blank" rel="noreferrer">
@@ -292,20 +302,66 @@
         </div>
 
         <div class="architecture-diagram reveal reveal-delay-1" data-spotlight role="img" aria-label="PhoneAgent architecture diagram">
-          <div class="diagram-glow" aria-hidden="true"></div>
-          <div class="diagram-node node-user"><span class="node-icon">U</span><div><b>User Task</b><small>Natural language goal</small></div></div>
-          <div class="diagram-connector connector-vertical"><i></i></div>
-          <div class="diagram-node node-runtime"><img src="assets/logo.svg" alt=""><div><b>Agent Runtime</b><small>State machine · context · policy</small></div></div>
-          <div class="diagram-split"><i></i><i></i><i></i></div>
-          <div class="diagram-columns">
-            <div class="diagram-lane"><div class="diagram-node node-compact"><span class="node-icon node-cyan">A</span><div><b>App Resolver</b><small>Package / activity</small></div></div><div class="lane-arrow">↓</div><div class="diagram-node node-leaf"><b>Deterministic launch</b></div></div>
-            <div class="diagram-lane"><div class="diagram-node node-compact"><span class="node-icon node-violet">V</span><div><b>VLM Planner</b><small>Screenshot grounding</small></div></div><div class="lane-arrow">↓</div><div class="diagram-node node-leaf"><b>Structured action</b></div></div>
-            <div class="diagram-lane"><div class="diagram-node node-compact"><span class="node-icon node-green">R</span><div><b>Verifier</b><small>Evidence / recovery</small></div></div><div class="lane-arrow">↓</div><div class="diagram-node node-leaf"><b>Bounded decision</b></div></div>
+          <div class="architecture-flow architecture-flow-sequential">
+            <div class="flow-node flow-node-user">
+              <span class="flow-icon">U</span>
+              <div><b>User Task</b><small>Natural language goal</small></div>
+            </div>
+
+            <div class="flow-link" aria-hidden="true"></div>
+
+            <div class="flow-node flow-node-runtime">
+              <img src="assets/logo.svg" alt="">
+              <div><b>Initialize + App Catalog</b><small>State · aliases · likely goal apps</small></div>
+            </div>
+
+            <div class="flow-link" aria-hidden="true"></div>
+
+            <div class="flow-node flow-node-observe">
+              <span class="flow-icon flow-icon-resolver">O</span>
+              <div><b>Observe Device</b><small>Screenshot · foreground app</small></div>
+            </div>
+
+            <div class="flow-shortcut">
+              <span>Pure launch</span>
+              <small>Resolved package → Action Handler · skips VLM</small>
+            </div>
+
+            <div class="flow-link" aria-hidden="true"></div>
+
+            <div class="flow-node flow-node-planner">
+              <span class="flow-icon flow-icon-planner">V</span>
+              <div><b>Plan + Parse</b><small>General tasks · one validated VLM action</small></div>
+            </div>
+
+            <div class="flow-link" aria-hidden="true"></div>
+
+            <div class="flow-node flow-node-executor">
+              <span class="flow-icon flow-icon-executor">↯</span>
+              <div><b>Action Handler</b><small>Dispatch validated device operations</small></div>
+            </div>
+
+            <div class="flow-link" aria-hidden="true"></div>
+
+            <div class="flow-node flow-node-device">
+              <span class="flow-device-symbol">▯</span>
+              <div><b>Android Device</b><small>ADB command · post-action observation</small></div>
+            </div>
+
+            <div class="flow-link" aria-hidden="true"></div>
+
+            <div class="flow-node flow-node-verifier">
+              <span class="flow-icon flow-icon-verifier">E</span>
+              <div><b>Verify Evidence</b><small>Command · observable · semantic</small></div>
+            </div>
+
+            <div class="flow-link" aria-hidden="true"></div>
+
+            <div class="flow-node flow-node-decision">
+              <span class="flow-icon flow-icon-decision">↺</span>
+              <div><b>Runtime Decision</b><small>Continue · bounded recovery · finish</small></div>
+            </div>
           </div>
-          <div class="diagram-merge"><i></i></div>
-          <div class="diagram-node node-adb"><span class="node-icon node-blue">↯</span><div><b>ADB Executor</b><small>Tap · Type · Swipe · Launch</small></div></div>
-          <div class="diagram-connector connector-vertical small"><i></i></div>
-          <div class="diagram-node node-phone"><span class="phone-symbol">▯</span><div><b>Android Device</b><small>Observation returns to runtime</small></div><span class="return-arrow">↺</span></div>
         </div>
       </div>
     </section>
@@ -320,9 +376,9 @@
 
         <div class="quickstart-grid">
           <div class="setup-steps reveal">
-            <article><span>01</span><div><h3 data-i18n="quickstart.step1.title">Prepare the environment</h3><p data-i18n="quickstart.step1.description">Linux, Python 3.12+, Android Platform Tools, and an Android device with USB debugging enabled.</p></div></article>
+            <article><span>01</span><div><h3 data-i18n="quickstart.step1.title">Prepare the environment</h3><p data-i18n="quickstart.step1.description">Python 3.12+, uv, Android Platform Tools, and a USB-debuggable device. Install ADB Keyboard before tasks that use Type.</p></div></article>
             <article><span>02</span><div><h3 data-i18n="quickstart.step2.title">Configure the model</h3><p data-i18n="quickstart.step2.description">Use a vision-language model service compatible with the OpenAI Chat Completions API.</p></div></article>
-            <article><span>03</span><div><h3 data-i18n="quickstart.step3.title">Run a task</h3><p data-i18n="quickstart.step3.description">Start with deterministic application launch, then move to multi-step visual tasks.</p></div></article>
+            <article><span>03</span><div><h3 data-i18n="quickstart.step3.title">Run a task</h3><p data-i18n="quickstart.step3.description">Run a multi-step WeChat and Meituan task. The planner is instructed to mark order submission as sensitive so the runtime requests confirmation.</p></div></article>
           </div>
 
           <div class="terminal-card reveal reveal-delay-1" data-spotlight>
@@ -342,34 +398,36 @@
 <span class="term-muted"># Configure the VLM endpoint</span>
 <span class="term-prompt">$</span> cp .env.example .env
 
-<span class="term-muted"># Check the device and run</span>
-<span class="term-prompt">$</span> adb devices
-<span class="term-prompt">$</span> uv run phoneagent <span class="term-string">"打开设置"</span></code></pre>
+<span class="term-muted"># List the device and run (full preflight runs automatically)</span>
+<span class="term-prompt">$</span> uv run phoneagent --list-devices
+<span class="term-prompt">$</span> uv run phoneagent <span class="term-string">"打开微信，并在美团小程序中下单一杯咖啡"</span></code></pre>
             <div class="terminal-result">
               <span class="result-dot"></span>
-              <span data-i18n="quickstart.result">Runtime started · device connected · task initialized</span>
+              <span data-i18n="quickstart.result">ADB preflight passed · model API responded · task started</span>
             </div>
           </div>
 
-          <aside class="provider-card reveal reveal-delay-2" data-spotlight>
-            <div class="provider-head">
-              <span class="provider-logo">Z</span>
-              <div><span data-i18n="provider.kicker">Recommended provider</span><b>Zhipu BigModel</b></div>
-              <a href="https://docs.bigmodel.cn/cn/api/introduction" target="_blank" rel="noreferrer" aria-label="Open Zhipu BigModel documentation">↗</a>
-            </div>
-            <div class="provider-config">
-              <div><span>base-url</span><code>https://open.bigmodel.cn/api/paas/v4</code></div>
-              <div><span>model</span><code>autoglm-phone</code></div>
-              <div><span>apikey</span><code data-i18n="provider.apikey">Apply on the Zhipu platform</code></div>
-            </div>
-          </aside>
-        </div>
+          <div class="quickstart-sidebar">
+            <aside class="provider-card reveal reveal-delay-2" data-spotlight>
+              <div class="provider-head">
+                <span class="provider-logo">Z</span>
+                <div><span data-i18n="provider.kicker">Recommended provider</span><b>Zhipu BigModel</b></div>
+                <a href="https://docs.bigmodel.cn/cn/api/introduction" target="_blank" rel="noreferrer" aria-label="Open Zhipu BigModel documentation">↗</a>
+              </div>
+              <div class="provider-config">
+                <div><span>base-url</span><code>https://open.bigmodel.cn/api/paas/v4</code></div>
+                <div><span>model</span><code>autoglm-phone</code></div>
+                <div><span>apikey</span><code data-i18n="provider.apikey">Apply on the Zhipu platform</code></div>
+              </div>
+            </aside>
 
-        <div class="requirements-strip reveal reveal-delay-2">
-          <div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg><span>Python 3.12+</span></div>
-          <div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg><span>Android + ADB</span></div>
-          <div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg><span>Vision-language model</span></div>
-          <div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg><span>Linux / Ubuntu</span></div>
+            <div class="requirements-strip reveal reveal-delay-2">
+              <div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg><span>Python 3.12+ · uv</span></div>
+              <div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg><span>Android + ADB</span></div>
+              <div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg><span>Vision-language model</span></div>
+              <div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg><span>ADB Keyboard for Type</span></div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -378,32 +436,35 @@
       <div class="container trajectory-grid">
         <div class="trajectory-visual reveal">
           <div class="json-window" data-spotlight>
-            <div class="json-titlebar"><div><span></span><span></span><span></span></div><strong>trajectory_028846c0.json</strong><em>schema 1.0</em></div>
+            <div class="json-titlebar"><div><span></span><span></span><span></span></div><strong>trajectory_028846c0.json</strong><em>schema 1.0 · event excerpt</em></div>
             <pre><code>{
   <span class="json-key">"type"</span>: <span class="json-string">"verification"</span>,
-  <span class="json-key">"step"</span>: <span class="json-number">4</span>,
-  <span class="json-key">"action"</span>: {
-    <span class="json-key">"name"</span>: <span class="json-string">"Launch"</span>,
-    <span class="json-key">"app"</span>: <span class="json-string">"设置"</span>
-  },
-  <span class="json-key">"result"</span>: {
+  <span class="json-key">"message"</span>: <span class="json-string">"Foreground application matches com.tencent.mm"</span>,
+  <span class="json-key">"payload"</span>: {
+    <span class="json-key">"action"</span>: {
+      <span class="json-key">"_metadata"</span>: <span class="json-string">"do"</span>,
+      <span class="json-key">"action"</span>: <span class="json-string">"Launch"</span>,
+      <span class="json-key">"app"</span>: <span class="json-string">"微信"</span>
+    },
+    <span class="json-key">"status"</span>: <span class="json-string">"passed"</span>,
+    <span class="json-key">"policy"</span>: <span class="json-string">"foreground_app_match"</span>,
     <span class="json-key">"command_success"</span>: <span class="json-bool">true</span>,
     <span class="json-key">"observable_effect_verified"</span>: <span class="json-bool">true</span>,
-    <span class="json-key">"semantic_effect_verified"</span>: <span class="json-bool">true</span>,
-    <span class="json-key">"policy"</span>: <span class="json-string">"foreground_package_match"</span>
-  }
+    <span class="json-key">"semantic_effect_verified"</span>: <span class="json-bool">true</span>
+  },
+  <span class="json-key">"step"</span>: <span class="json-number">1</span>
 }</code></pre>
           </div>
         </div>
 
         <div class="trajectory-copy reveal reveal-delay-1">
           <span class="section-kicker" data-i18n="trajectory.kicker">Traceability</span>
-          <h2 data-i18n="trajectory.title">Every decision leaves evidence.</h2>
+          <h2 data-i18n="trajectory.title">Significant runtime transitions leave evidence.</h2>
           <p data-i18n="trajectory.description">A run is not just terminal output. PhoneAgent records the state machine, model interaction, structured action, execution result, verification evidence, recovery policy, and final outcome.</p>
           <ul class="check-list">
-            <li data-i18n="trajectory.item1">Reconstruct failed runs without relying on screenshots alone.</li>
-            <li data-i18n="trajectory.item2">Measure model latency, token usage, action frequency, and recovery behavior.</li>
-            <li data-i18n="trajectory.item3">Build reproducible evaluation and future experience-learning pipelines.</li>
+            <li data-i18n="trajectory.item1">Investigate failed runs through structured state, action, and evidence events.</li>
+            <li data-i18n="trajectory.item2">Measure latency, actions, and recovery behavior; capture tokens when the provider reports usage.</li>
+            <li data-i18n="trajectory.item3">Use saved trajectories as input for evaluation and future experience-learning work.</li>
           </ul>
           <a class="text-link" data-link="release" href="#" target="_blank" rel="noreferrer"><span data-i18n="trajectory.release">Read the v0.1.0 release notes</span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
         </div>
@@ -427,8 +488,8 @@
           </div>
 
           <div class="roadmap-column next" data-spotlight>
-            <div class="roadmap-column-head"><span></span><div><b data-i18n="roadmap.next">Next</b><small>v0.x</small></div></div>
-            <div class="roadmap-card"><span>→</span><p><b data-i18n="roadmap.item4.title">Semantic verification</b><small data-i18n="roadmap.item4.description">Subgoal-aware evidence and independent review.</small></p></div>
+            <div class="roadmap-column-head"><span></span><div><b data-i18n="roadmap.next">Next</b><small>Planned</small></div></div>
+            <div class="roadmap-card"><span>→</span><p><b data-i18n="roadmap.item4.title">Broader semantic verification</b><small data-i18n="roadmap.item4.description">Subgoal-aware evidence and independent review beyond deterministic system checks.</small></p></div>
             <div class="roadmap-card"><span>→</span><p><b data-i18n="roadmap.item5.title">Evaluation harness</b><small data-i18n="roadmap.item5.description">Task suites, replay, metrics, and regression.</small></p></div>
             <div class="roadmap-card"><span>→</span><p><b data-i18n="roadmap.item6.title">Provider abstraction</b><small data-i18n="roadmap.item6.description">More local and hosted VLM backends.</small></p></div>
           </div>
@@ -454,7 +515,7 @@
         <div class="limitations-list">
           <article class="reveal"><span>01</span><div><h3 data-i18n="limitations.item1.title">Visual change is not semantic correctness</h3><p data-i18n="limitations.item1.description">For coordinate actions, a changed screen does not prove that the intended UI target was selected.</p></div></article>
           <article class="reveal reveal-delay-1"><span>02</span><div><h3 data-i18n="limitations.item2.title">Task completion is model-reported</h3><p data-i18n="limitations.item2.description">The planner currently reports full completion through finish(...); there is no independent task judge yet.</p></div></article>
-          <article class="reveal reveal-delay-2"><span>03</span><div><h3 data-i18n="limitations.item3.title">Protected screens require takeover</h3><p data-i18n="limitations.item3.description">DRM, FLAG_SECURE, passwords, verification codes, and payment flows may be unobservable or sensitive.</p></div></article>
+          <article class="reveal reveal-delay-2"><span>03</span><div><h3 data-i18n="limitations.item3.title">Protected screens may require takeover</h3><p data-i18n="limitations.item3.description">The runtime does not guess on blank or protected screens; it requests takeover when enabled or stops the run.</p></div></article>
           <article class="reveal"><span>04</span><div><h3 data-i18n="limitations.item4.title">ADB is the current deployment boundary</h3><p data-i18n="limitations.item4.description">A true on-device product requires an Android application, services, permissions, and privacy controls.</p></div></article>
         </div>
       </div>
@@ -490,7 +551,7 @@
     </div>
     <div class="container footer-bottom">
       <span>© <span data-current-year></span> Wenhao Liu. PhoneAgent is open source.</span>
-      <span>Observe · Plan · Execute · Verify</span>
+      <span>Observe · Plan · Execute · Verify · Recover</span>
     </div>
   </footer>
 
