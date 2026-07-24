@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import json
 import math
 import re
 import time
@@ -83,23 +82,15 @@ def finish(
 
 
 def parse_action(response: str) -> dict[str, Any]:
-    """Parse and validate one model action.
+    """Parse exactly one Python-style ``do(...)`` or ``finish(...)`` call.
 
-    Supported protocols:
-      * ``do(action="Tap", element=[500, 500])``
-      * ``finish(message="done", success=True)``
-      * JSON objects containing ``action`` / ``thinking`` fields
-      * wrappers such as ``<answer>...</answer>`` and fenced code blocks
-
-    Parsing uses :mod:`ast` and :func:`ast.literal_eval`; model text is never
-    evaluated as executable Python.
+    ``<answer>...</answer>`` is accepted because it is the canonical model
+    envelope. JSON, Markdown code fences, multiple calls and malformed-string
+    repair are deliberately rejected so protocol errors enter the bounded
+    recovery path instead of being executed heuristically.
     """
     action_text = _normalize_action_text(response)
-    json_action = _try_parse_action_json(action_text)
-    if json_action is not None:
-        return validate_action(json_action)
-
-    call_text = _extract_first_call(action_text)
+    call_text = _extract_single_call(action_text)
     if re.match(r"^do\s*\(", call_text):
         return validate_action(_parse_do_call(call_text))
     if re.match(r"^finish\s*\(", call_text):
@@ -145,7 +136,7 @@ def validate_action(action: dict[str, Any]) -> dict[str, Any]:
     if canonical == "Launch":
         app = normalized.get("app")
         if not isinstance(app, str) or not app.strip():
-            raise ActionParseError("Launch action requires app=\"...\"")
+            raise ActionParseError('Launch action requires app="..."')
         normalized["app"] = app.strip()
 
     elif canonical == "Type":
@@ -159,9 +150,7 @@ def validate_action(action: dict[str, Any]) -> dict[str, Any]:
             raise ActionParseError("Type clear must be a boolean")
 
     elif canonical in {"Long Press", "Swipe"} and "duration_ms" in normalized:
-        normalized["duration_ms"] = _positive_int(
-            normalized["duration_ms"], "duration_ms"
-        )
+        normalized["duration_ms"] = _positive_int(normalized["duration_ms"], "duration_ms")
 
     elif canonical == "Wait":
         duration = normalized.get("duration", "1 second")
@@ -184,59 +173,33 @@ def validate_action(action: dict[str, Any]) -> dict[str, Any]:
 
 def _normalize_action_text(text: str) -> str:
     text = (text or "").strip()
-    text = re.sub(r"^```(?:python|json)?\s*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\s*```$", "", text)
-    answer_match = re.search(r"<answer>(.*?)</answer>", text, flags=re.DOTALL | re.IGNORECASE)
+    if not text:
+        raise ActionParseError("Model action is empty")
+    if text.startswith("```") or text.endswith("```"):
+        raise ActionParseError("Markdown code fences are not part of the action protocol")
+    answer_match = re.fullmatch(
+        r"(?:<think>.*?</think>\s*)?<answer>(.*?)</answer>",
+        text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
     if answer_match:
         text = answer_match.group(1).strip()
-    return text.strip()
+    elif "<answer>" in text.casefold() or "</answer>" in text.casefold():
+        raise ActionParseError("Malformed <answer> action envelope")
+    return text
 
 
-def _try_parse_action_json(text: str) -> dict[str, Any] | None:
-    try:
-        payload = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
+def _extract_single_call(text: str) -> str:
+    """Extract one balanced call and reject any extra model output."""
+    match = re.match(r"^(?:do|finish)\s*\(", text)
+    if not match:
+        raise ActionParseError(f"Expected one do(...) or finish(...) call: {text[:200]}")
 
-    if payload.get("_metadata") in {"do", "finish"}:
-        return payload
-    if payload.get("type") == "finish":
-        return {
-            "_metadata": "finish",
-            "message": str(payload.get("message", "Task completed")),
-            "success": payload.get("success", True),
-        }
-    action = payload.get("action")
-    if isinstance(action, dict):
-        if action.get("type") == "finish" or action.get("_metadata") == "finish":
-            return {
-                "_metadata": "finish",
-                "message": str(action.get("message", "Task completed")),
-                "success": action.get("success", True),
-            }
-        return {"_metadata": "do", **action}
-    if isinstance(action, str):
-        copied = {k: v for k, v in payload.items() if k not in {"thinking", "thought"}}
-        copied["_metadata"] = "do"
-        return copied
-    return None
-
-
-def _extract_first_call(text: str) -> str:
-    """Extract the first balanced ``do(...)`` or ``finish(...)`` call."""
-    matches = list(re.finditer(r"(?<![\w])(?:do|finish)\s*\(", text))
-    if not matches:
-        raise ActionParseError(f"No do(...) or finish(...) call found: {text[:200]}")
-
-    start = matches[0].start()
     depth = 0
     quote: str | None = None
     escaped = False
-
-    for pos in range(start, len(text)):
-        ch = text[pos]
+    end: int | None = None
+    for pos, ch in enumerate(text):
         if quote:
             if escaped:
                 escaped = False
@@ -251,19 +214,20 @@ def _extract_first_call(text: str) -> str:
             depth += 1
         elif ch == ")":
             depth -= 1
+            if depth < 0:
+                raise ActionParseError("Unbalanced action parentheses")
             if depth == 0:
-                return text[start : pos + 1].strip()
-    return text[start:].strip()
+                end = pos + 1
+                break
+    if quote or end is None or depth != 0:
+        raise ActionParseError("Incomplete action call")
+    if text[end:].strip():
+        raise ActionParseError("Exactly one action call is allowed per model turn")
+    return text[:end].strip()
 
 
 def _parse_do_call(call_text: str) -> dict[str, Any]:
-    try:
-        call = _parse_call_ast(call_text)
-    except ActionParseError:
-        fallback = _parse_type_call_fallback(call_text)
-        if fallback is not None:
-            return fallback
-        raise
+    call = _parse_call_ast(call_text)
 
     if not isinstance(call.func, ast.Name) or call.func.id != "do":
         raise ActionParseError("Expected do(...) call")
@@ -284,13 +248,7 @@ def _parse_do_call(call_text: str) -> dict[str, Any]:
 
 
 def _parse_finish_call(call_text: str) -> dict[str, Any]:
-    try:
-        call = _parse_call_ast(call_text)
-    except ActionParseError:
-        fallback = _parse_finish_call_fallback(call_text)
-        if fallback is not None:
-            return fallback
-        raise
+    call = _parse_call_ast(call_text)
 
     if not isinstance(call.func, ast.Name) or call.func.id != "finish":
         raise ActionParseError("Expected finish(...) call")
@@ -322,43 +280,6 @@ def _parse_call_ast(call_text: str) -> ast.Call:
     if not isinstance(tree.body, ast.Call):
         raise ActionParseError("Action must be a function call")
     return tree.body
-
-
-def _parse_type_call_fallback(call_text: str) -> dict[str, Any] | None:
-    action_match = re.search(r"action\s*=\s*(['\"])(.*?)\1", call_text, flags=re.DOTALL)
-    text_match = re.search(r"text\s*=\s*(['\"])(.*?)\1\s*\)?\s*$", call_text, flags=re.DOTALL)
-    if not action_match or not text_match:
-        return None
-    if _canonical_action_name(action_match.group(2)) != "Type":
-        return None
-    return {"_metadata": "do", "action": "Type", "text": text_match.group(2)}
-
-
-def _parse_finish_call_fallback(call_text: str) -> dict[str, Any] | None:
-    if not re.match(r"^finish\s*\(", call_text):
-        return None
-    inner = call_text[call_text.find("(") + 1 :].strip()
-    if inner.endswith(")"):
-        inner = inner[:-1].strip()
-    message = _extract_string_keyword_loose(inner, "message")
-    if message is None:
-        return None
-    success_match = re.search(r"success\s*=\s*(True|False)", inner)
-    success = success_match is None or success_match.group(1) == "True"
-    return {"_metadata": "finish", "message": message, "success": success}
-
-
-def _extract_string_keyword_loose(text: str, keyword: str) -> str | None:
-    patterns = [
-        rf"{keyword}\s*=\s*(['\"])(.*?)\1(?=\s*(?:,|$))",
-        rf"{keyword}\s*=\s*(['\"])(.*)\1\s*$",
-        rf"{keyword}\s*=\s*(['\"])(.*)$",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text, flags=re.DOTALL)
-        if match:
-            return match.group(2).strip()
-    return None
 
 
 def _canonical_action_name(value: str) -> str | None:
@@ -486,9 +407,7 @@ class ActionHandler:
         element: list[int | float], screen_width: int, screen_height: int
     ) -> tuple[int, int]:
         if screen_width <= 0 or screen_height <= 0:
-            raise ValueError(
-                f"Invalid display size: {screen_width}x{screen_height}"
-            )
+            raise ValueError(f"Invalid display size: {screen_width}x{screen_height}")
         x = ActionHandler._scale_relative_coordinate(element[0], screen_width)
         y = ActionHandler._scale_relative_coordinate(element[1], screen_height)
         return x, y
@@ -554,9 +473,7 @@ class ActionHandler:
         return ActionResult(True, False, metadata={"x": x, "y": y})
 
     def _handle_long_press(self, action: dict[str, Any], width: int, height: int) -> ActionResult:
-        duration_ms = min(
-            int(action.get("duration_ms", 800)), self.max_gesture_duration_ms
-        )
+        duration_ms = min(int(action.get("duration_ms", 800)), self.max_gesture_duration_ms)
         x, y = self._relative_to_absolute(action["element"], width, height)
         self.device.long_press(x, y, duration_ms=duration_ms)
         return ActionResult(
@@ -571,9 +488,7 @@ class ActionHandler:
         duration_ms = action.get("duration_ms")
         if duration_ms is not None:
             duration_ms = min(int(duration_ms), self.max_gesture_duration_ms)
-        self.device.swipe(
-            start_x, start_y, end_x, end_y, duration_ms=duration_ms
-        )
+        self.device.swipe(start_x, start_y, end_x, end_y, duration_ms=duration_ms)
         return ActionResult(
             True,
             False,
@@ -604,9 +519,7 @@ class ActionHandler:
         time.sleep(duration)
         message = None
         if duration < requested:
-            message = (
-                f"Wait duration was capped from {requested:g}s to {duration:g}s"
-            )
+            message = f"Wait duration was capped from {requested:g}s to {duration:g}s"
         return ActionResult(
             True,
             False,
@@ -620,9 +533,7 @@ class ActionHandler:
         return ActionResult(True, False, message="Manual operation completed")
 
     def _handle_interact(self, action: dict[str, Any], width: int, height: int) -> ActionResult:
-        message = str(
-            action.get("message", "User choice or manual interaction is required")
-        )
+        message = str(action.get("message", "User choice or manual interaction is required"))
         self.takeover_callback(message)
         return ActionResult(True, False, message="User interaction completed")
 
@@ -676,15 +587,41 @@ class ActionHandler:
             )
 
         sensitive_keywords = (
-            "支付", "付款", "转账", "提现", "购买", "下单", "提交订单",
-            "确认订单", "确认支付", "发送", "发布", "删除", "清空", "注销",
-            "授权", "允许", "同意", "退款", "挂号", "预约", "拨打", "呼叫",
-            "pay", "purchase", "place order", "send", "post", "publish",
-            "delete", "clear", "authorize", "allow", "confirm order",
+            "支付",
+            "付款",
+            "转账",
+            "提现",
+            "购买",
+            "下单",
+            "提交订单",
+            "确认订单",
+            "确认支付",
+            "发送",
+            "发布",
+            "删除",
+            "清空",
+            "注销",
+            "授权",
+            "允许",
+            "同意",
+            "退款",
+            "挂号",
+            "预约",
+            "拨打",
+            "呼叫",
+            "pay",
+            "purchase",
+            "place order",
+            "send",
+            "post",
+            "publish",
+            "delete",
+            "clear",
+            "authorize",
+            "allow",
+            "confirm order",
         )
-        text_fields = (
-            "label", "description", "instruction", "message", "target"
-        )
+        text_fields = ("label", "description", "instruction", "message", "target")
         haystack = " ".join(str(action.get(field, "")) for field in text_fields).strip()
         if haystack and any(keyword in haystack.casefold() for keyword in sensitive_keywords):
             return f"Sensitive operation detected: {haystack}"

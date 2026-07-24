@@ -1,86 +1,115 @@
 # PhoneAgent Architecture
 
-This document describes the execution path implemented by PhoneAgent `v0.1.1`.
-It is intentionally limited to behavior present in the repository.
+This document describes PhoneAgent `v0.1.2` as implemented in the repository. PhoneAgent is
+deliberately scoped as a Research Runtime / Evaluation Runtime for real Android devices.
 
 ## Runtime overview
 
 ```text
-CLI
-  -> environment and device preflight
+CLI / Web Console
+  -> environment, device and model preflight
   -> PhoneAgent.run(task)
-  -> app discovery and task initialization
+  -> app catalog and task initialization
   -> Observe
-  -> Plan
-  -> Parse and validate action
+  -> Build bounded model context
+  -> Plan one strict action
+  -> Parse and validate
   -> Execute through ADB
-  -> Verify post-action evidence
+  -> Verify evidence
   -> Continue, recover, request takeover, or terminate
-  -> persist trajectory
+  -> atomically persist the trajectory
 ```
 
-The runtime uses an explicit state machine. State transitions and significant events are
-written to the trajectory so a failed run can be reconstructed without relying only on
-terminal logs.
+The runtime does not attempt to be a general workflow framework. Its contract is a bounded,
+inspectable Android execution loop with explicit trust boundaries.
+
+## State and events
+
+`AgentState.phase` is the only live phase source. `AgentState` stores the current working
+state needed by the loop: goal, phase, step, current and target apps, latest observation,
+latest execution result, failure counters, final status, and timestamps.
+
+`AgentState.transition(...)` validates legal phase changes and returns an event payload. It
+does not keep a second transition-history object. Historical phase changes, model output,
+actions, verification, and recovery decisions exist only in the trajectory event stream.
+
+Every runtime event is created once as an `AgentEvent`. The same event instance is sent to
+the callback and serialized by `TrajectoryRecorder`, preventing timestamp, step, message, or
+payload drift between live integrations and saved trajectories.
 
 ## Main components
 
-### CLI and configuration
+### Entry points and configuration
 
-- `phoneagent.entrypoint` explicitly loads `.env`, then enters the CLI.
-- `phoneagent.cli` validates arguments, checks the Android/ADB environment, constructs
-  runtime configuration, and starts the agent.
-- Importing `phoneagent` as a library does not load `.env`, connect to a device, or create
-  a model client.
+- `phoneagent.entrypoint` explicitly loads `.env` before entering the CLI.
+- `phoneagent.cli` performs preflight checks, validates arguments, and builds runtime
+  configuration.
+- `phoneagent-web` provides a localhost debugging console that consumes `AgentEvent` updates.
+- Importing `phoneagent` as a library does not load `.env`, connect to a device, or create a
+  model client.
+- Common research parameters appear in default `--help`; advanced bounds remain available as
+  CLI flags or environment variables.
+
+App-context character limits belong to `AppCatalogConfig.prompt_char_budget`. There is no
+second Agent-level app-context budget or duplicate context-injection switch.
 
 ### Android device layer
 
-- `phoneagent.adb` contains parameterized ADB command, connection, screenshot, and text
-  input primitives.
-- `phoneagent.devices.android.AndroidDevice` exposes the device-facing interface consumed
-  by the runtime.
-- Model coordinates use the normalized `[0, 999]` space and are converted to the current
-  device resolution before execution.
+- `phoneagent.adb` contains parameterized ADB command, connection, screenshot, and input
+  primitives.
+- `phoneagent.devices.android.AndroidDevice` exposes the device interface used by the runtime.
+- Model coordinates use the normalized `[0, 999]` space and are converted to the active device
+  resolution before execution.
 
-### App discovery and deterministic routing
+### App catalog and deterministic routing
 
-- `AppDiscovery` queries Launcher activities from the connected device.
-- `AppCatalog` merges discovered packages with built-in and user-provided aliases.
-- `AppResolver` returns candidates with confidence and ambiguity information.
-- `LaunchAppCapability` prefers an explicit package/activity launch and falls back to a
-  package-scoped launcher command when necessary.
-- Launcher search is only treated as prepared when a foreground or visual change is
-  actually observed.
+The application domain has three implementation files:
 
-Deterministic app routing is an optimization and reliability path. It does not replace the
-visual loop for navigation inside an application.
+- `phoneagent.apps.catalog` contains alias handling, discovery, resolution, task-intent
+  extraction, and the bounded catalog cache.
+- `phoneagent.apps.models` contains app-domain value objects.
+- `phoneagent.apps.launcher` contains deterministic launch behavior.
 
-### Model planning and action protocol
+The supported public imports remain available from `phoneagent.apps`. Direct imports from
+the former internal `aliases`, `discovery`, `intents`, or `resolver` modules are not supported.
 
-The planner receives the user goal, current screenshot, current application context,
-prior execution evidence, recovery directives, and saved notes. The expected response is:
+Only a high-confidence pure open-app goal may take the deterministic launch shortcut. Other
+tasks receive compact, task-relevant app context and continue through the visual loop.
+
+### Model context and strict action protocol
+
+`phoneagent.model.context` owns screenshot-backed prompt construction, prior-execution
+summaries, app-context serialization, context trimming, and compact strict-protocol recovery.
+`phoneagent.agent` remains responsible for orchestration rather than prompt-history mechanics.
+
+The canonical response is:
 
 ```xml
 <think>brief reasoning</think>
-<answer>do(action="Tap", element=[x, y])</answer>
+<answer>do(action="Tap", element=[500, 300])</answer>
 ```
 
-Actions are parsed with Python AST/literal parsing or JSON parsing. Model output is never
-executed as Python code. Parsed actions pass an allow-list and type/range validation before
-reaching the executor.
+A single plain `do(...)` or `finish(...)` is accepted as a narrow compatibility path. JSON,
+Markdown fenced code, multiple calls, extra trailing text, malformed envelopes, and incomplete
+strings are rejected. The runtime does not guess or repair an executable action.
 
-### Execution
+Accepted action text is parsed with Python AST/literal handling and validated against the
+action allow-list and parameter constraints. Model output is never evaluated or executed as
+Python code. A protocol failure enters the existing bounded strict-action recovery path.
 
-`ActionHandler` maps validated actions to Android operations. The runtime supports launch,
-tap, text input, swipe, back, home, double tap, long press, wait, notes, API calls, user
-interaction/takeover, and finish actions.
+### Execution and confirmation
 
-Potentially sensitive actions pass through the configured confirmation path. The runtime
-does not silently reinterpret malformed actions.
+`ActionHandler` maps one validated action to Android operations. Supported operations include
+launch, tap, type, swipe, back, home, double tap, long press, wait, note, API callback, user
+interaction/takeover, and finish.
+
+Actions marked sensitive, requiring confirmation, or detected as high-risk are paused at the
+configured confirmation callback. Rejection is terminal for that action and is never
+overridden by recovery.
 
 ### Verification semantics
 
-Verification deliberately separates three claims:
+Verification keeps three claims separate:
 
 ```text
 command_success
@@ -88,48 +117,45 @@ observable_effect_verified
 semantic_effect_verified
 ```
 
-- `command_success` means the Android/ADB command completed successfully.
-- `observable_effect_verified` means a foreground-app change or sufficient post-action
-  screen change was observed.
-- `semantic_effect_verified` means deterministic state proves the intended semantic effect,
-  such as the requested package being in the foreground.
+- Command success means the Android/ADB operation completed.
+- Observable effect means a foreground-app or sufficient visual change was measured.
+- Semantic effect requires deterministic evidence that the requested effect occurred.
 
-For coordinate actions, observable change is not semantic proof. Status-bar and navigation
-bar regions are cropped before visual comparison to reduce false positives from clocks and
-system indicators.
+For coordinate actions, visual change is not independent semantic proof. Status and navigation
+bar regions are excluded from image comparison to reduce false positives.
 
-Verification can return `passed`, `failed`, `inconclusive`, or `skipped`.
+### Minimal recovery policy
 
-### Recovery
+Recovery has only five strategies:
 
-Recovery is bounded by per-failure-episode and total-task budgets. Successful progress ends
-an active failure episode so unrelated later failures do not inherit its retry count.
+```text
+REPLAN · REOBSERVE · RETRY_ACTION · TAKEOVER · ABORT
+```
 
-Automatic action replay is restricted to a small set of idempotent operations. In
-particular, the runtime does not blindly replay `Back`, `Tap`, `Type`, `Swipe`, `Double Tap`,
-or `Long Press`.
-
-Recovery may re-observe, replan, retry an allowed action, relaunch the target application,
-request user takeover, or abort. More invasive backtracking/home-reset policies are disabled
-by default.
+Recovery is bounded per failure episode and per task. `Launch`, `Wait`, and `Home` may receive
+one retry when they are not marked sensitive. `Tap`, `Type`, `Swipe`, `Back`, `Double Tap`, and
+`Long Press` are never blindly replayed. Relaunch, backtrack, and home-reset are not separate
+recovery branches; the model can select explicit navigation actions after a fresh observation.
 
 ### Trajectory
 
-The trajectory recorder writes structured events through a temporary file followed by an
-atomic replacement. The public `v0.1.1` trajectory schema is version `1.0`.
+`TrajectoryRecorder` writes a temporary JSON file and atomically replaces the final path.
+Trajectory schema version remains `1.0` in PhoneAgent `v0.1.2`.
 
-A trajectory can contain task text, model output, package/application names, timestamps,
-action parameters, and execution evidence. It should be redacted before publication.
+Each event contains its type, timestamp, message, payload, and optional top-level step. The
+final state snapshot is included for convenience, but the event stream is authoritative for
+execution history.
+
+Trajectories may contain task text, model content, packages, timestamps, action parameters,
+and evidence. They must be reviewed and redacted before publication.
 
 ## Trust boundaries
 
-PhoneAgent `v0.1.1` does not claim independent task-level correctness:
+PhoneAgent `v0.1.2` does not claim independent task-level correctness:
 
-- visual change does not prove that a coordinate action was semantically correct;
-- protected/secure screens may not be observable;
-- the planner currently self-reports full task completion through `finish(...)`;
-- deterministic verification is available only where Android state provides adequate
-  evidence.
-
-These boundaries are part of the runtime contract and should remain explicit as stronger
-semantic verification is added.
+- screen change does not prove that a coordinate target was semantically correct;
+- secure or protected surfaces may be unobservable;
+- the planning model currently reports full task completion through `finish(...)`;
+- deterministic verification is only possible when Android state exposes sufficient evidence;
+- real-device behavior varies by Android version, vendor ROM, launcher, permissions, and model
+  provider.

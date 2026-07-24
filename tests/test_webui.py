@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from phoneagent.runtime import AgentEvent, EventType
-from webui.runtime import ConsoleRuntime, TrajectoryStore
+from webui.runtime import ConsoleRuntime, TrajectoryStore, _build_configs
 from webui.server import ConsoleHTTPServer
 
 
@@ -30,6 +30,7 @@ class _FakeState:
     def __init__(self) -> None:
         self.goal = ""
         self.success = True
+        self.recovery_count = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -38,17 +39,12 @@ class _FakeState:
             "phase": "completed" if self.success else "failed",
             "current_step": 1,
             "current_app": "WeChat",
-            "recovery_count": 0,
+            "recovery_count": self.recovery_count,
             "finished_at": time.time(),
-            "last_thinking": "Open the requested app",
-            "last_action": {"_metadata": "do", "action": "Launch", "app": "微信"},
-            "last_verification": {
-                "status": "passed",
-                "command_success": True,
-                "observable_effect_verified": True,
-                "semantic_effect_verified": True,
+            "last_execution": {
+                "success": self.success,
+                "action": {"_metadata": "do", "action": "Launch", "app": "微信"},
             },
-            "last_recovery": {},
         }
 
 
@@ -67,14 +63,37 @@ class _FakeAgent:
             AgentEvent(
                 type=EventType.PHASE_CHANGE,
                 message="Acquire current device state",
-                payload={"current": "observing", "step": 1},
+                payload={"current": "observing"},
+                step=1,
             )
         )
         self.event_callback(
             AgentEvent(
                 type=EventType.MODEL_RESPONSE,
                 message="Model response received",
-                payload={"thinking": "Open the requested app", "step": 1},
+                payload={"thinking": "Open the requested app"},
+                step=1,
+            )
+        )
+        self.event_callback(
+            AgentEvent(
+                type=EventType.ACTION,
+                message="Parsed action",
+                payload={"action": {"_metadata": "do", "action": "Launch", "app": "微信"}},
+                step=1,
+            )
+        )
+        self.event_callback(
+            AgentEvent(
+                type=EventType.VERIFICATION,
+                message="Launch verified",
+                payload={
+                    "status": "passed",
+                    "command_success": True,
+                    "observable_effect_verified": True,
+                    "semantic_effect_verified": True,
+                },
+                step=1,
             )
         )
         if self.require_confirmation:
@@ -94,6 +113,16 @@ def _device_check(_device_id: str | None) -> tuple[bool, str | None]:
 def _model_check(_config: Any) -> bool:
     print("Model API Check\n  [OK] API responded")
     return True
+
+
+def test_web_config_uses_catalog_owned_prompt_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PHONE_AGENT_MAX_APP_CONTEXT_CHARS", "4096")
+    _model, agent, _trajectory = _build_configs(tmp_path)
+
+    assert agent.app_catalog.prompt_char_budget == 4096
+    assert not hasattr(agent, "max_app_context_chars")
 
 
 def test_console_checks_once_and_reuses_agent_for_tasks(tmp_path: Path) -> None:
@@ -144,7 +173,14 @@ def test_console_checks_once_and_reuses_agent_for_tasks(tmp_path: Path) -> None:
     assert len(created) == 1
     assert device_calls == 1
     assert model_calls == 1
-    assert runtime.snapshot()["startup"]["reused"] is True
+    snapshot = runtime.snapshot()
+    assert snapshot["startup"]["reused"] is True
+    assert snapshot["task"]["last_thinking"] == "Open the requested app"
+    assert snapshot["task"]["last_action"]["action"] == "Launch"
+    assert snapshot["task"]["last_verification"]["semantic_effect_verified"] is True
+    live_events = runtime.events_after(0)["events"]
+    agent_events = [event for event in live_events if event["type"] == "action"]
+    assert agent_events[-1]["step"] == 1
     runtime.close()
 
 

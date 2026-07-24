@@ -1,4 +1,4 @@
-"""Runtime components."""
+"""PhoneAgent runtime primitives."""
 
 from phoneagent.runtime.events import AgentEvent, EventType
 from phoneagent.runtime.recovery import (
@@ -9,13 +9,7 @@ from phoneagent.runtime.recovery import (
     RecoveryOutcome,
     RecoveryStrategy,
 )
-from phoneagent.runtime.state import AgentState
-from phoneagent.runtime.state_machine import (
-    AgentPhase,
-    PhaseTransition,
-    StateTransitionError,
-    TaskStateMachine,
-)
+from phoneagent.runtime.state import AgentPhase, AgentState, StateTransitionError
 from phoneagent.runtime.trajectory import TrajectoryRecorder
 from phoneagent.runtime.verification import (
     ActionVerifier,
@@ -30,7 +24,6 @@ __all__ = [
     "AgentPhase",
     "AgentState",
     "EventType",
-    "PhaseTransition",
     "RecoveryConfig",
     "RecoveryContext",
     "RecoveryDecision",
@@ -38,7 +31,6 @@ __all__ = [
     "RecoveryOutcome",
     "RecoveryStrategy",
     "StateTransitionError",
-    "TaskStateMachine",
     "TrajectoryRecorder",
     "VerificationConfig",
     "VerificationResult",

@@ -9,7 +9,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from phoneagent.actions import ActionHandler, ActionParseError, ActionResult, do, finish, parse_action
+from phoneagent.actions import (
+    ActionHandler,
+    ActionParseError,
+    ActionResult,
+    do,
+    finish,
+    parse_action,
+)
 from phoneagent.apps import (
     AppCatalogConfig,
     AppDiscoveryConfig,
@@ -20,7 +27,15 @@ from phoneagent.apps import (
 )
 from phoneagent.config import get_messages, get_system_prompt
 from phoneagent.devices import AndroidDevice, ScreenObservation
-from phoneagent.model import MessageBuilder, ModelClient, ModelConfig
+from phoneagent.model import (
+    MessageBuilder,
+    ModelClient,
+    ModelConfig,
+    ModelProtocolError,
+    append_observation_message,
+    prepare_protocol_recovery,
+    trim_context,
+)
 from phoneagent.runtime import (
     ActionVerifier,
     AgentEvent,
@@ -59,10 +74,7 @@ class AgentConfig:
     save_trajectory: bool = True
     allow_fallback_screenshot: bool = False
     app_awareness_enabled: bool = True
-    inject_app_context: bool = True
     deterministic_pure_launch_enabled: bool = True
-    strict_action_recovery_enabled: bool = True
-    max_app_context_chars: int = 6000
     app_catalog: AppCatalogConfig = field(default_factory=AppCatalogConfig)
     app_discovery: AppDiscoveryConfig = field(default_factory=AppDiscoveryConfig)
     app_launcher: AppLauncherConfig = field(default_factory=AppLauncherConfig)
@@ -86,8 +98,6 @@ class AgentConfig:
             raise ValueError("observation_retries cannot be negative")
         if self.observation_retry_delay < 0:
             raise ValueError("observation_retry_delay cannot be negative")
-        if self.max_app_context_chars < 256:
-            raise ValueError("max_app_context_chars must be at least 256")
 
 
 @dataclass(slots=True)
@@ -195,9 +205,7 @@ class PhoneAgent:
                         phase=self.state.phase.value,
                     )
                     break
-                is_first = not any(
-                    message.get("role") == "system" for message in self._context
-                )
+                is_first = not any(message.get("role") == "system" for message in self._context)
                 result = self._execute_step(
                     user_prompt=task if is_first else None,
                     is_first=is_first,
@@ -239,9 +247,7 @@ class PhoneAgent:
                 raise ValueError("task is required for the first step")
             self._start_run(task)
 
-        is_first = not any(
-            message.get("role") == "system" for message in self._context
-        )
+        is_first = not any(message.get("role") == "system" for message in self._context)
         result = self._execute_step(
             (task or self.state.goal) if is_first else None,
             is_first=is_first,
@@ -251,7 +257,7 @@ class PhoneAgent:
         return result
 
     def reset(self) -> None:
-        """Clear context, counters, state machine and trajectory state."""
+        """Clear model context, counters, current state and trajectory data."""
         self._context.clear()
         self._step_count = 0
         self._pending_observation = None
@@ -310,8 +316,21 @@ class PhoneAgent:
         if deterministic_result is not None:
             return deterministic_result
 
-        self._append_user_message(observation, user_prompt=user_prompt, is_first=is_first)
-        self._trim_context()
+        append_observation_message(
+            self._context,
+            observation=observation,
+            state=self.state,
+            system_prompt=self.agent_config.system_prompt or "",
+            user_prompt=user_prompt,
+            is_first=is_first,
+            strict_recovery=self._strict_action_recovery,
+            app_context=self._device_app_context,
+            notes=self.action_handler.notes,
+            include_app_context=self.agent_config.app_awareness_enabled,
+            app_context_char_budget=self.agent_config.app_catalog.prompt_char_budget,
+        )
+        self._strict_action_recovery = None
+        trim_context(self._context, self.agent_config.context_turns)
         self._transition(AgentPhase.PLANNING, "Request one constrained model action")
 
         try:
@@ -332,6 +351,29 @@ class PhoneAgent:
             response = self.model_client.request(
                 self._context,
                 print_stream=self.agent_config.verbose,
+            )
+        except ModelProtocolError as exc:
+            logger.warning("Model protocol error: %s", exc)
+            self._strict_action_recovery = prepare_protocol_recovery(
+                self._context,
+                reason=str(exc),
+                app_context=self._device_app_context,
+            )
+            self._record_event(
+                EventType.MODEL_RESPONSE,
+                "Model response rejected by protocol",
+                {
+                    "raw_content": exc.raw_content,
+                    "protocol_error": str(exc),
+                    "step": self._step_count,
+                },
+            )
+            return self._handle_runtime_failure(
+                message=f"Model protocol error: {exc}",
+                error_code="model_protocol_error",
+                thinking="",
+                raw_model_output=exc.raw_content,
+                action=None,
             )
         except Exception as exc:
             logger.exception("Model request failed: %s", exc)
@@ -359,10 +401,6 @@ class PhoneAgent:
             "total_tokens": response.total_tokens,
             "truncated": response.truncated,
         }
-        self.state.update_model_response(
-            thinking=response.thinking,
-            raw_content=response.raw_content,
-        )
         self._record_event(
             EventType.MODEL_RESPONSE,
             "Model response received",
@@ -383,9 +421,7 @@ class PhoneAgent:
         try:
             action = parse_action(response.action)
         except ActionParseError as exc:
-            error_code = (
-                "model_output_truncated" if response.truncated else "action_parse_error"
-            )
+            error_code = "model_output_truncated" if response.truncated else "action_parse_error"
             message = (
                 "Model output was truncated before a valid action could be completed "
                 f"(finish_reason={response.finish_reason}): {exc}"
@@ -396,7 +432,11 @@ class PhoneAgent:
                 preview = response.action[:2000]
                 suffix = "\n...[truncated preview]" if len(response.action) > len(preview) else ""
                 print(f"\n{message}\nRaw action preview: {preview}{suffix}")
-            self._prepare_strict_action_recovery(message)
+            self._strict_action_recovery = prepare_protocol_recovery(
+                self._context,
+                reason=message,
+                app_context=self._device_app_context,
+            )
             return self._handle_runtime_failure(
                 message=message,
                 error_code=error_code,
@@ -518,10 +558,10 @@ class PhoneAgent:
         if recovery_payload is not None:
             self.state.update_recovery(recovery_payload)
 
-        finished = bool(
-            recovery_execution
-            and recovery_execution.outcome.decision.terminal
-        ) or self._failure_limit_reached()
+        finished = (
+            bool(recovery_execution and recovery_execution.outcome.decision.terminal)
+            or self._failure_limit_reached()
+        )
         if finished and not self.state.phase.terminal:
             self._transition(AgentPhase.FAILED, "Recovery or failure budget exhausted")
         elif not self.state.phase.terminal:
@@ -662,9 +702,10 @@ class PhoneAgent:
         if recovery_payload is not None:
             self.state.update_recovery(recovery_payload)
 
-        terminal_failure = bool(
-            recovery_execution and recovery_execution.outcome.decision.terminal
-        ) or self._failure_limit_reached()
+        terminal_failure = (
+            bool(recovery_execution and recovery_execution.outcome.decision.terminal)
+            or self._failure_limit_reached()
+        )
         if not completed and not terminal_failure and not self.state.phase.terminal:
             self._transition(
                 AgentPhase.OBSERVING,
@@ -795,45 +836,8 @@ class PhoneAgent:
         if decision.strategy == RecoveryStrategy.REOBSERVE:
             return self._recover_by_observation(decision)
 
-        if decision.strategy in {RecoveryStrategy.RETRY_ACTION, RecoveryStrategy.RELAUNCH}:
-            retry_action = action
-            if decision.strategy == RecoveryStrategy.RELAUNCH:
-                target = str((action or {}).get("app") or self.state.target_app).strip()
-                retry_action = do(action="Launch", app=target)
-            return self._recover_by_action_retry(decision, retry_action)
-
-        if decision.strategy in {RecoveryStrategy.BACKTRACK, RecoveryStrategy.HOME_RESET}:
-            try:
-                if decision.strategy == RecoveryStrategy.BACKTRACK:
-                    self.device.back()
-                    command = "Back"
-                else:
-                    self.device.home()
-                    command = "Home"
-                observation = self._observe_with_retries()
-                self._record_observation(observation, source=f"recovery_{decision.strategy.value}")
-                self._pending_observation = observation
-                outcome = RecoveryOutcome(
-                    decision=decision,
-                    success=True,
-                    message=f"Recovery command {command} completed",
-                )
-                self._transition(AgentPhase.OBSERVING, "Navigation recovery complete")
-                self._record_recovery_outcome(outcome)
-                return _RecoveryExecution(outcome=outcome, observation=observation)
-            except Exception as exc:
-                outcome = RecoveryOutcome(
-                    decision=decision,
-                    success=False,
-                    message=f"Navigation recovery failed: {exc}",
-                    error_code="recovery_navigation_failed",
-                )
-                self._transition(
-                    AgentPhase.OBSERVING,
-                    "Navigation recovery failed; retry normal observation",
-                )
-                self._record_recovery_outcome(outcome)
-                return _RecoveryExecution(outcome=outcome)
+        if decision.strategy == RecoveryStrategy.RETRY_ACTION:
+            return self._recover_by_action_retry(decision, action)
 
         if decision.strategy == RecoveryStrategy.TAKEOVER:
             try:
@@ -1062,9 +1066,7 @@ class PhoneAgent:
     ) -> ScreenObservation:
         retries = self.agent_config.observation_retries if retries is None else retries
         retry_delay = (
-            self.agent_config.observation_retry_delay
-            if retry_delay is None
-            else retry_delay
+            self.agent_config.observation_retry_delay if retry_delay is None else retry_delay
         )
         attempts = retries + 1
         last_error: Exception | None = None
@@ -1078,185 +1080,6 @@ class PhoneAgent:
                 time.sleep(retry_delay * attempt)
         assert last_error is not None
         raise last_error
-
-    def _append_user_message(
-        self,
-        observation: ScreenObservation,
-        *,
-        user_prompt: str | None,
-        is_first: bool,
-    ) -> None:
-        screen_payload = {
-            **observation.to_screen_info(),
-            "current_app": observation.current_app,
-            "phase": self.state.phase.value,
-            "stagnant_observation_count": self.state.stagnant_observation_count,
-        }
-        screen_info = MessageBuilder.build_screen_info(**screen_payload)
-        sections: list[str] = []
-        if is_first:
-            assert self.agent_config.system_prompt is not None
-            self._context.append(
-                MessageBuilder.create_system_message(self.agent_config.system_prompt)
-            )
-        goal = user_prompt or self.state.goal
-        if goal:
-            sections.append(f"** User Goal **\n{goal}")
-        if self._strict_action_recovery:
-            sections.append(
-                "** STRICT ACTION RECOVERY **\n" + self._strict_action_recovery
-            )
-            self._strict_action_recovery = None
-        if not is_first:
-            previous_execution = self._build_previous_execution_info()
-            if previous_execution:
-                sections.append(previous_execution)
-        if self.agent_config.inject_app_context and self._device_app_context:
-            sections.append(
-                "** Device App Context **\n"
-                + self._serialize_app_context(self._device_app_context)
-            )
-        if self.action_handler.notes:
-            sections.append(
-                "** Saved Notes **\n"
-                + json.dumps(
-                    self.action_handler.notes[-20:],
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
-            )
-        sections.append(f"** Runtime Phase **\n{self.state.phase.value}")
-        sections.append(f"** Screen Info **\n{screen_info}")
-        self._context.append(
-            MessageBuilder.create_user_message(
-                text="\n\n".join(sections),
-                image_base64=observation.screenshot.base64_data,
-                image_mime_type=observation.screenshot.mime_type,
-            )
-        )
-
-    def _serialize_app_context(self, context: dict[str, Any]) -> str:
-        """Serialize model-facing app context with a hard character budget."""
-        text = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
-        if len(text) <= self.agent_config.max_app_context_chars:
-            return text
-        minimal = {
-            "catalog_available": context.get("catalog_available"),
-            "installed_launchable_count": context.get("installed_launchable_count"),
-            "likely_goal_apps": context.get("likely_goal_apps", [])[:1],
-            "context_policy": "hard_truncated_to_primary_candidate",
-            "launch_policy": context.get("launch_policy"),
-        }
-        compact = json.dumps(minimal, ensure_ascii=False, separators=(",", ":"))
-        if len(compact) <= self.agent_config.max_app_context_chars:
-            return compact
-        primary = self._primary_app_candidate() or {}
-        tiny = {
-            "catalog_available": context.get("catalog_available"),
-            "installed_launchable_count": context.get("installed_launchable_count"),
-            "primary_candidate": {
-                "label": primary.get("label"),
-                "package_name": primary.get("package_name"),
-            },
-            "context_policy": "minimal_valid_json",
-        }
-        return json.dumps(tiny, ensure_ascii=False, separators=(",", ":"))
-
-    def _prepare_strict_action_recovery(self, reason: str) -> None:
-        """Discard a malformed turn and prepare one compact protocol retry."""
-        if self._context and self._context[-1].get("role") == "user":
-            self._context.pop()
-        self._compact_context_for_protocol_recovery()
-        if not self.agent_config.strict_action_recovery_enabled:
-            return
-        candidate = self._primary_app_candidate()
-        candidate_text = ""
-        if candidate:
-            candidate_text = (
-                "\nResolved app candidate:\n"
-                f"- label: {candidate.get('label', '')}\n"
-                f"- package: {candidate.get('package_name', '')}\n"
-            )
-        self._strict_action_recovery = (
-            f"Previous model output was unusable: {reason}.\n"
-            "Do not repeat prior reasoning or enumerate applications. "
-            "Return exactly one valid action inside <answer>...</answer>."
-            f"{candidate_text}"
-            "Use the current screen and resolved candidate. Do not copy placeholder values."
-        )
-
-    def _compact_context_for_protocol_recovery(self) -> None:
-        """Keep only the system prompt and the most recent valid completed turn."""
-        if not self._context:
-            return
-        system = self._context[0] if self._context[0].get("role") == "system" else None
-        body = self._context[1:] if system is not None else self._context
-        last_pair: list[dict[str, Any]] = []
-        for index in range(len(body) - 2, -1, -1):
-            if (
-                body[index].get("role") == "user"
-                and index + 1 < len(body)
-                and body[index + 1].get("role") == "assistant"
-            ):
-                last_pair = [body[index], body[index + 1]]
-                break
-        self._context = ([system] if system is not None else []) + last_pair
-
-    def _primary_app_candidate(self) -> dict[str, Any] | None:
-        likely = self._device_app_context.get("likely_goal_apps", [])
-        if not isinstance(likely, list) or not likely:
-            return None
-        resolution = likely[0].get("resolution", {}) if isinstance(likely[0], dict) else {}
-        matched = resolution.get("matched_app") if isinstance(resolution, dict) else None
-        if isinstance(matched, dict):
-            return matched
-        candidates = likely[0].get("candidates", []) if isinstance(likely[0], dict) else []
-        if candidates and isinstance(candidates[0], dict):
-            app = candidates[0].get("app")
-            return app if isinstance(app, dict) else None
-        return None
-
-    def _build_previous_execution_info(self) -> str:
-        previous = self.state.last_execution
-        if not previous:
-            return ""
-        payload = {
-            "success": previous.get("success"),
-            "command_success": previous.get("command_success"),
-            "should_finish": previous.get("should_finish"),
-            "message": previous.get("message"),
-            "error_code": previous.get("error_code"),
-            "action": previous.get("action"),
-            "verification": previous.get("verification"),
-            "recovery": previous.get("recovery"),
-            "stagnant_observation_count": self.state.stagnant_observation_count,
-        }
-        return "** Previous Action Result **\n" + json.dumps(
-            payload, ensure_ascii=False, separators=(",", ":")
-        )
-
-    def _trim_context(self) -> None:
-        if len(self._context) <= 2:
-            return
-        system = self._context[0]
-        body = self._context[1:]
-        current_user = body[-1] if body and body[-1].get("role") == "user" else None
-        completed = body[:-1] if current_user is not None else body
-        pairs: list[list[dict[str, Any]]] = []
-        index = 0
-        while index + 1 < len(completed):
-            first, second = completed[index], completed[index + 1]
-            if first.get("role") == "user" and second.get("role") == "assistant":
-                pairs.append([first, second])
-                index += 2
-            else:
-                index += 1
-        new_context = [system]
-        for pair in pairs[-self.agent_config.context_turns :]:
-            new_context.extend(pair)
-        if current_user is not None:
-            new_context.append(current_user)
-        self._context = new_context
 
     def _record_observation(self, observation: ScreenObservation, *, source: str) -> None:
         payload = {
@@ -1327,8 +1150,7 @@ class PhoneAgent:
         return bool(
             self.agent_config.max_runtime_seconds > 0
             and self.state.started_at is not None
-            and time.time() - self.state.started_at
-            >= self.agent_config.max_runtime_seconds
+            and time.time() - self.state.started_at >= self.agent_config.max_runtime_seconds
         )
 
     def _failure_limit_reached(self) -> bool:
@@ -1342,8 +1164,7 @@ class PhoneAgent:
         if action.get("action") in {"Wait", "Note", "Interact", "Take_over"}:
             return False
         return (
-            self.state.repeated_action_count >= limit
-            and self.state.stagnant_observation_count > 0
+            self.state.repeated_action_count >= limit and self.state.stagnant_observation_count > 0
         )
 
     @staticmethod
@@ -1397,9 +1218,7 @@ class PhoneAgent:
                     "available": bool(apps),
                     "app_count": len(apps),
                     "catalog_error": self.app_catalog.last_error,
-                    "likely_goal_apps": self._device_app_context.get(
-                        "likely_goal_apps", []
-                    ),
+                    "likely_goal_apps": self._device_app_context.get("likely_goal_apps", []),
                     "pure_launch_intent": (
                         self._pure_launch_intent.query
                         if self._pure_launch_intent is not None
@@ -1462,9 +1281,7 @@ class PhoneAgent:
         if not self.agent_config.save_trajectory:
             return
         try:
-            self.last_trajectory_path = str(
-                self.trajectory.save(state=self.state.to_dict())
-            )
+            self.last_trajectory_path = str(self.trajectory.save(state=self.state.to_dict()))
         except Exception as exc:
             logger.exception("Failed to save trajectory: %s", exc)
             self.last_trajectory_path = None
@@ -1475,7 +1292,7 @@ class PhoneAgent:
         reason: str,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        transition = self.state.machine.transition(
+        transition = self.state.transition(
             target,
             reason=reason,
             step=self._step_count,
@@ -1485,7 +1302,7 @@ class PhoneAgent:
             self._record_event(
                 EventType.PHASE_CHANGE,
                 reason,
-                {**transition.to_dict(), "step": self._step_count},
+                {**transition, "step": self._step_count},
             )
 
     def _record_event(
@@ -1495,28 +1312,22 @@ class PhoneAgent:
         payload: dict[str, Any] | None = None,
     ) -> None:
         normalized_payload = payload or {}
-        self.trajectory.add(
-            event_type.value,
-            normalized_payload,
-            step=normalized_payload.get("step"),
+        event = AgentEvent(
+            type=event_type,
             message=message,
+            payload=normalized_payload,
+            step=normalized_payload.get("step"),
         )
-        self._emit(event_type, message, normalized_payload)
+        self.trajectory.add_event(event)
+        self._emit(event)
 
-    def _emit(
-        self,
-        event_type: EventType,
-        message: str = "",
-        payload: dict[str, Any] | None = None,
-    ) -> None:
+    def _emit(self, event: AgentEvent) -> None:
         if self.event_callback is None:
             return
         try:
-            self.event_callback(
-                AgentEvent(type=event_type, message=message, payload=payload or {})
-            )
+            self.event_callback(event)
         except Exception:
-            logger.exception("Event callback failed for %s", event_type.value)
+            logger.exception("Event callback failed for %s", event.type.value)
 
     @property
     def context(self) -> list[dict[str, Any]]:

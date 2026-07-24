@@ -96,18 +96,16 @@ def _build_configs(project_root: Path) -> tuple[ModelConfig, AgentConfig, Path]:
         max_repeated_actions=_env_int("PHONE_AGENT_MAX_REPEATED_ACTIONS", 3),
         observation_retries=_env_int("PHONE_AGENT_OBSERVATION_RETRIES", 2),
         trajectory_dir=str(trajectory_dir),
-        max_app_context_chars=_env_int("PHONE_AGENT_MAX_APP_CONTEXT_CHARS", 6000),
         app_catalog=AppCatalogConfig(
             ttl_seconds=_env_float("PHONE_AGENT_APP_CATALOG_TTL", 300),
             max_prompt_matches=_env_int("PHONE_AGENT_APP_PROMPT_LIMIT", 5),
+            prompt_char_budget=_env_int("PHONE_AGENT_MAX_APP_CONTEXT_CHARS", 6000),
         ),
         app_discovery=AppDiscoveryConfig(alias_file=alias_file),
         app_launcher=AppLauncherConfig(),
         verification=VerificationConfig(
             observation_retries=_env_int("PHONE_AGENT_VERIFICATION_RETRIES", 1),
-            visual_change_threshold=_env_float(
-                "PHONE_AGENT_VERIFICATION_THRESHOLD", 0.002
-            ),
+            visual_change_threshold=_env_float("PHONE_AGENT_VERIFICATION_THRESHOLD", 0.002),
         ),
         recovery=RecoveryConfig(
             max_total_recoveries=_env_int("PHONE_AGENT_MAX_RECOVERIES", 8),
@@ -196,9 +194,7 @@ class ConsoleRuntime:
         model_checker: Callable[[ModelConfig], bool] = check_model_api,
     ) -> None:
         self.project_root = (project_root or Path.cwd()).resolve()
-        initial_trajectory = self.project_root / os.getenv(
-            "PHONE_AGENT_TRAJECTORY_DIR", "runs"
-        )
+        initial_trajectory = self.project_root / os.getenv("PHONE_AGENT_TRAJECTORY_DIR", "runs")
         self.trajectories = TrajectoryStore(initial_trajectory)
         self._agent_factory = agent_factory
         self._device_checker = device_checker
@@ -470,9 +466,7 @@ class ConsoleRuntime:
             state = agent.state.to_dict()
             success = state.get("success") is True
             trajectory = (
-                Path(agent.last_trajectory_path).name
-                if agent.last_trajectory_path
-                else None
+                Path(agent.last_trajectory_path).name if agent.last_trajectory_path else None
             )
             with self._condition:
                 if self.task["id"] != task_id:
@@ -487,10 +481,6 @@ class ConsoleRuntime:
                         "finished_at": state.get("finished_at") or time.time(),
                         "result": result,
                         "trajectory": trajectory,
-                        "last_thinking": state.get("last_thinking", ""),
-                        "last_action": state.get("last_action"),
-                        "last_verification": state.get("last_verification"),
-                        "last_recovery": state.get("last_recovery"),
                     }
                 )
                 self._append_event_locked(
@@ -535,7 +525,9 @@ class ConsoleRuntime:
         with self._condition:
             if self.task["status"] not in BUSY_TASK_STATES:
                 return
-            step = payload.get("step") if isinstance(payload, dict) else None
+            step = event.step
+            if step is None and isinstance(payload, dict):
+                step = payload.get("step")
             if isinstance(step, int):
                 self.task["current_step"] = step
             if event.type.value == "phase_change" and isinstance(payload, dict):
@@ -557,6 +549,7 @@ class ConsoleRuntime:
                 event.message,
                 payload,
                 timestamp=event.timestamp,
+                step=step if isinstance(step, int) else None,
                 task_id=self.task["id"],
             )
 
@@ -651,6 +644,7 @@ class ConsoleRuntime:
         *,
         task_id: str | None = None,
         timestamp: float | None = None,
+        step: int | None = None,
     ) -> None:
         event = {
             "sequence": self._next_sequence,
@@ -660,6 +654,8 @@ class ConsoleRuntime:
             "payload": _json_safe(payload),
             "task_id": task_id,
         }
+        if step is not None:
+            event["step"] = step
         self._next_sequence += 1
         self._events.append(event)
         if len(self._events) > 2_000:

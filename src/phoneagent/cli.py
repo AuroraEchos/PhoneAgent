@@ -74,26 +74,31 @@ Examples:
         "--max-consecutive-failures",
         type=int,
         default=int(os.getenv("PHONE_AGENT_MAX_FAILURES", "3")),
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--max-repeated-actions",
         type=int,
         default=int(os.getenv("PHONE_AGENT_MAX_REPEATED_ACTIONS", "3")),
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--context-turns",
         type=int,
         default=int(os.getenv("PHONE_AGENT_CONTEXT_TURNS", "12")),
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--model-retries",
         type=int,
         default=int(os.getenv("PHONE_AGENT_MODEL_RETRIES", "2")),
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--observation-retries",
         type=int,
         default=int(os.getenv("PHONE_AGENT_OBSERVATION_RETRIES", "2")),
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--disable-verification",
@@ -104,12 +109,13 @@ Examples:
         "--verification-retries",
         type=int,
         default=int(os.getenv("PHONE_AGENT_VERIFICATION_RETRIES", "1")),
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--verification-threshold",
         type=float,
         default=float(os.getenv("PHONE_AGENT_VERIFICATION_THRESHOLD", "0.002")),
-        help="Minimum normalized visual difference treated as a screen change",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--disable-recovery",
@@ -120,21 +126,13 @@ Examples:
         "--max-recoveries",
         type=int,
         default=int(os.getenv("PHONE_AGENT_MAX_RECOVERIES", "8")),
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--recovery-attempts-per-failure",
         type=int,
         default=int(os.getenv("PHONE_AGENT_RECOVERY_ATTEMPTS", "2")),
-    )
-    parser.add_argument(
-        "--enable-backtrack-recovery",
-        action="store_true",
-        help="Allow one automatic Back action after repeated navigation failures",
-    )
-    parser.add_argument(
-        "--enable-home-reset-recovery",
-        action="store_true",
-        help="Allow returning to Home after repeated failures (off by default)",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--disable-app-awareness",
@@ -150,28 +148,24 @@ Examples:
         "--app-catalog-ttl",
         type=float,
         default=float(os.getenv("PHONE_AGENT_APP_CATALOG_TTL", "300")),
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--app-prompt-limit",
         type=int,
         default=int(os.getenv("PHONE_AGENT_APP_PROMPT_LIMIT", "5")),
-        help="Maximum task-relevant application candidates injected per query",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--max-app-context-chars",
         type=int,
         default=int(os.getenv("PHONE_AGENT_MAX_APP_CONTEXT_CHARS", "6000")),
-        help="Hard character budget for Device App Context",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--disable-deterministic-launch",
         action="store_true",
         help="Route pure app-open tasks through the VLM instead of direct package launch",
-    )
-    parser.add_argument(
-        "--disable-strict-action-recovery",
-        action="store_true",
-        help="Disable compact strict-action retry after malformed/truncated model output",
     )
     parser.add_argument(
         "--disable-launcher-search-fallback",
@@ -320,7 +314,7 @@ def check_model_api(config: ModelConfig) -> bool:
             base_url=config.base_url,
             api_key=config.api_key,
             timeout=min(config.timeout, 30.0),
-            http_client=DefaultHttpxClient(trust_env=False)
+            http_client=DefaultHttpxClient(trust_env=False),
         )
         response = client.chat.completions.create(
             model=config.model_name,
@@ -379,7 +373,6 @@ def print_configured_apps() -> None:
         print(app)
 
 
-
 def _select_ready_device(device_id: str | None) -> str | None:
     conn = ADBConnection()
     ready = [item for item in conn.list_devices() if item.status == "device"]
@@ -411,11 +404,9 @@ def print_device_apps(device_id: str | None) -> int:
     print(f"Launchable apps: {len(apps)}")
     print("LABEL\tPACKAGE\tACTIVITY\tLABEL_SOURCE")
     for app in apps:
-        print(
-            f"{app.label}\t{app.package_name}\t"
-            f"{app.activity_name or ''}\t{app.label_source}"
-        )
+        print(f"{app.label}\t{app.package_name}\t{app.activity_name or ''}\t{app.label_source}")
     return 0
+
 
 def run_interactive(agent: PhoneAgent) -> None:
     print("PhoneAgent interactive mode. Type exit/quit/q to stop.\n")
@@ -473,21 +464,17 @@ def main() -> int:
             trajectory_dir=args.trajectory_dir,
             allow_fallback_screenshot=args.allow_fallback_screenshot,
             app_awareness_enabled=not args.disable_app_awareness,
-            inject_app_context=not args.disable_app_awareness,
             deterministic_pure_launch_enabled=not args.disable_deterministic_launch,
-            strict_action_recovery_enabled=not args.disable_strict_action_recovery,
-            max_app_context_chars=args.max_app_context_chars,
             app_catalog=AppCatalogConfig(
                 ttl_seconds=args.app_catalog_ttl,
                 max_prompt_matches=args.app_prompt_limit,
+                prompt_char_budget=args.max_app_context_chars,
             ),
             app_discovery=AppDiscoveryConfig(
                 alias_file=args.app_aliases_file,
             ),
             app_launcher=AppLauncherConfig(
-                enable_launcher_search_fallback=(
-                    not args.disable_launcher_search_fallback
-                ),
+                enable_launcher_search_fallback=(not args.disable_launcher_search_fallback),
             ),
             verification=VerificationConfig(
                 enabled=not args.disable_verification,
@@ -498,8 +485,6 @@ def main() -> int:
                 enabled=not args.disable_recovery,
                 max_total_recoveries=args.max_recoveries,
                 max_attempts_per_failure=args.recovery_attempts_per_failure,
-                allow_backtrack=args.enable_backtrack_recovery,
-                allow_home_reset=args.enable_home_reset_recovery,
             ),
         )
     except ValueError as exc:

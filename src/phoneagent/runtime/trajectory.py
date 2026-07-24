@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from phoneagent.runtime.events import AgentEvent
+
 
 @dataclass(slots=True)
 class TrajectoryRecorder:
@@ -27,6 +29,10 @@ class TrajectoryRecorder:
     saved_path: str | None = None
     schema_version: str = "1.0"
 
+    def add_event(self, event: AgentEvent) -> None:
+        """Append one event produced by the runtime event bus."""
+        self.events.append(_json_safe(event.to_dict()))
+
     def add(
         self,
         event_type: str,
@@ -35,9 +41,10 @@ class TrajectoryRecorder:
         step: int | None = None,
         message: str = "",
     ) -> None:
+        """Compatibility path for custom evaluator events."""
         event: dict[str, Any] = {
             "timestamp": time.time(),
-            "type": event_type,
+            "type": str(event_type),
             "message": message,
             "payload": _json_safe(payload or {}),
         }

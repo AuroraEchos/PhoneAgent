@@ -40,7 +40,7 @@
         <img src="assets/logo.svg" alt="" width="34" height="34">
         <span>PhoneAgent</span>
       </a>
-      <span class="header-release" aria-label="Current release">v0.1.1</span>
+      <span class="header-release" aria-label="Current release">v0.1.2</span>
 
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" data-nav-toggle>
         <span class="sr-only">Open navigation</span>
@@ -73,7 +73,7 @@
         <div class="hero-copy reveal">
           <div class="eyebrow">
             <span class="status-dot" aria-hidden="true"></span>
-            <span data-i18n="hero.eyebrow">Open source · v0.1.1 Alpha</span>
+            <span data-i18n="hero.eyebrow">Open source · v0.1.2 Alpha</span>
           </div>
 
           <h1>
@@ -82,9 +82,9 @@
           </h1>
 
           <p class="hero-lead" data-i18n="hero.description">
-            PhoneAgent combines vision-language planning, deterministic Android capabilities,
-            safe structured actions, post-action evidence, and bounded recovery into one
-            auditable loop for real devices.
+            PhoneAgent is a focused Research and Evaluation Runtime that combines
+            vision-language planning, strict structured actions, Android execution, evidence
+            verification, and minimal bounded recovery into one auditable loop for real devices.
           </p>
 
           <div class="hero-actions">
@@ -226,7 +226,7 @@
             </div>
             <div class="feature-copy">
               <h3 data-i18n="features.protocol.title">Safe action protocol</h3>
-              <p data-i18n="features.protocol.description">Model output is parsed through AST/JSON and validated against an action allow-list. Generated text is never executed as Python code; actions marked or detected as sensitive require confirmation.</p>
+              <p data-i18n="features.protocol.description">One canonical action is parsed through AST and validated against an allow-list. JSON, code fences, multiple actions, and incomplete output are rejected; sensitive operations require confirmation.</p>
             </div>
             <code class="inline-code feature-detail">do(action="Tap", element=[512, 438])</code>
           </article>
@@ -262,7 +262,7 @@
             </div>
             <div class="feature-copy">
               <h3 data-i18n="features.recovery.title">Bounded recovery</h3>
-              <p data-i18n="features.recovery.description">Failure episodes have explicit budgets. Non-idempotent actions such as Tap, Type, Swipe, and Back are never blindly replayed.</p>
+              <p data-i18n="features.recovery.description">Recovery is limited to replan, reobserve, one safe retry, takeover, or abort. Tap, Type, Swipe, and Back are never blindly replayed.</p>
             </div>
             <div class="budget-meter feature-detail" aria-hidden="true"><span></span><span></span><span></span><span class="unused"></span><span class="unused"></span></div>
           </article>
@@ -274,7 +274,7 @@
             </div>
             <div class="feature-copy">
               <h3 data-i18n="features.trajectory.title">Auditable trajectories</h3>
-              <p data-i18n="features.trajectory.description">Persist observation metadata, model responses, actions, execution evidence, verification, recovery decisions, state transitions, and final results.</p>
+              <p data-i18n="features.trajectory.description">One AgentEvent source feeds callbacks and trajectories, preserving identical steps, timestamps, payloads, phase changes, and execution evidence.</p>
             </div>
             <div class="trajectory-lines feature-detail" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
           </article>
@@ -287,7 +287,7 @@
         <div class="architecture-copy reveal">
           <span class="section-kicker" data-i18n="architecture.kicker">Architecture</span>
           <h2 data-i18n="architecture.title">Deterministic where possible. Visual where necessary.</h2>
-          <p data-i18n="architecture.description">Only a high-confidence pure open-app goal takes the deterministic launch shortcut. Other tasks follow an explicit observe, plan, execute, verify, and recover state machine.</p>
+          <p data-i18n="architecture.description">Only a high-confidence pure open-app goal takes the deterministic launch shortcut. Other tasks follow the explicit observe, plan, execute, verify, and recover loop.</p>
 
           <div class="architecture-points">
             <div><span>01</span><p><b data-i18n="architecture.point1.title">App-aware initialization</b><small data-i18n="architecture.point1.description">Discover Launcher activities, apply aliases, and provide likely goal apps to the planner.</small></p></div>
@@ -460,13 +460,13 @@
         <div class="trajectory-copy reveal reveal-delay-1">
           <span class="section-kicker" data-i18n="trajectory.kicker">Traceability</span>
           <h2 data-i18n="trajectory.title">Significant runtime transitions leave evidence.</h2>
-          <p data-i18n="trajectory.description">A run is not just terminal output. PhoneAgent records the state machine, model interaction, structured action, execution result, verification evidence, recovery policy, and final outcome.</p>
+          <p data-i18n="trajectory.description">A run is not just terminal output. PhoneAgent records phase-change events, model interaction, structured actions, execution results, verification evidence, recovery decisions, and the final outcome.</p>
           <ul class="check-list">
             <li data-i18n="trajectory.item1">Investigate failed runs through structured state, action, and evidence events.</li>
             <li data-i18n="trajectory.item2">Measure latency, actions, and recovery behavior; capture tokens when the provider reports usage.</li>
             <li data-i18n="trajectory.item3">Use saved trajectories as input for evaluation and future experience-learning work.</li>
           </ul>
-          <a class="text-link" data-link="release" href="#" target="_blank" rel="noreferrer"><span data-i18n="trajectory.release">Read the v0.1.1 release notes</span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+          <a class="text-link" data-link="release" href="#" target="_blank" rel="noreferrer"><span data-i18n="trajectory.release">Read the v0.1.2 release notes</span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
         </div>
       </div>
     </section>
@@ -481,10 +481,10 @@
 
         <div class="roadmap-board reveal reveal-delay-1">
           <div class="roadmap-column complete" data-spotlight>
-            <div class="roadmap-column-head"><span></span><div><b data-i18n="roadmap.complete">Released</b><small>v0.1.1</small></div></div>
-            <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item1.title">Vision agent loop</b><small data-i18n="roadmap.item1.description">Observe, plan, execute, verify, recover.</small></p></div>
+            <div class="roadmap-column-head"><span></span><div><b data-i18n="roadmap.complete">Released</b><small>v0.1.2</small></div></div>
+            <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item1.title">Vision agent loop</b><small data-i18n="roadmap.item1.description">One live AgentState and one auditable AgentEvent stream.</small></p></div>
             <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item2.title">Android app resolver</b><small data-i18n="roadmap.item2.description">Discovery, aliases, package launch.</small></p></div>
-            <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item3.title">Safe action runtime</b><small data-i18n="roadmap.item3.description">Validation, confirmation, bounded recovery.</small></p></div>
+            <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item3.title">Safe action runtime</b><small data-i18n="roadmap.item3.description">Strict protocol, confirmation, minimal bounded recovery.</small></p></div>
             <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.web.title">Local Web Console</b><small data-i18n="roadmap.web.description">Session checks, live events, prompts, and trajectory inspection.</small></p></div>
           </div>
 
@@ -509,7 +509,7 @@
       <div class="container limitations-grid">
         <div class="limitations-heading reveal">
           <span class="section-kicker" data-i18n="limitations.kicker">Current boundaries</span>
-          <h2 data-i18n="limitations.title">Honest about what v0.1.1 can prove.</h2>
+          <h2 data-i18n="limitations.title">Honest about what v0.1.2 can prove.</h2>
           <p data-i18n="limitations.description">PhoneAgent is an Alpha research and engineering runtime. It exposes uncertainty instead of converting weak evidence into confident claims.</p>
         </div>
 
@@ -546,7 +546,7 @@
         <p data-i18n="footer.description">Vision-driven Android agent runtime.</p>
       </div>
       <div class="footer-links">
-        <div><b data-i18n="footer.project">Project</b><a data-link="github" href="#" target="_blank" rel="noreferrer">GitHub</a><a data-link="release" href="#" target="_blank" rel="noreferrer">Release v0.1.1</a><a data-link="issues" href="#" target="_blank" rel="noreferrer">Issues</a></div>
+        <div><b data-i18n="footer.project">Project</b><a data-link="github" href="#" target="_blank" rel="noreferrer">GitHub</a><a data-link="release" href="#" target="_blank" rel="noreferrer">Release v0.1.2</a><a data-link="issues" href="#" target="_blank" rel="noreferrer">Issues</a></div>
         <div><b data-i18n="footer.resources">Resources</b><a href="ARCHITECTURE.md" target="_blank" rel="noreferrer">Architecture</a><a data-link="readme" href="#" target="_blank" rel="noreferrer">README</a><a data-link="license" href="#" target="_blank" rel="noreferrer">Apache-2.0</a></div>
       </div>
     </div>

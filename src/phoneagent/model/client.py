@@ -15,6 +15,10 @@ from phoneagent.config.messages import get_message
 class ModelProtocolError(RuntimeError):
     """Raised when a model response is empty or violates the action protocol."""
 
+    def __init__(self, message: str, *, raw_content: str | None = None):
+        super().__init__(message)
+        self.raw_content = raw_content
+
 
 @dataclass(slots=True)
 class ModelConfig:
@@ -49,8 +53,10 @@ class ModelConfig:
     extra_body: dict[str, Any] = field(default_factory=dict)
     stream: bool = True
     capture_usage: bool = field(
-        default_factory=lambda: os.getenv("PHONE_AGENT_CAPTURE_USAGE", "1").strip().lower()
-        not in {"0", "false", "no", "off"}
+        default_factory=lambda: (
+            os.getenv("PHONE_AGENT_CAPTURE_USAGE", "1").strip().lower()
+            not in {"0", "false", "no", "off"}
+        )
     )
 
     def __post_init__(self) -> None:
@@ -151,90 +157,42 @@ class StreamingBoundaryDetector:
 
 
 class ModelResponseParser:
-    """Parse raw model output into thinking and action channels."""
+    """Split the canonical model envelope into thinking and action text.
 
-    ANSWER_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL | re.IGNORECASE)
-    THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
-    ACTION_MARKERS = ("do(", "finish(")
+    The runtime accepts the documented ``<think>/<answer>`` envelope and a
+    plain Python-style action as a narrow compatibility path. JSON and fenced
+    Markdown are not repaired or converted.
+    """
+
+    ENVELOPE_RE = re.compile(
+        r"^\s*(?:<think>(.*?)</think>\s*)?<answer>(.*?)</answer>\s*$",
+        re.DOTALL | re.IGNORECASE,
+    )
 
     @classmethod
     def parse(cls, raw_content: str) -> tuple[str, str]:
         content = (raw_content or "").strip()
         if not content:
-            return "", ""
+            raise ModelProtocolError("Model response content is empty")
+        if content.startswith("```") or content.endswith("```"):
+            raise ModelProtocolError("Markdown code fences are not part of the model protocol")
 
-        answer_match = cls.ANSWER_RE.search(content)
-        if answer_match:
-            action = answer_match.group(1).strip()
-            think_match = cls.THINK_RE.search(content)
-            thinking = (
-                think_match.group(1).strip()
-                if think_match
-                else content[: answer_match.start()].strip()
-            )
-            return cls._clean_thinking(thinking), cls._clean_action(action)
+        envelope = cls.ENVELOPE_RE.fullmatch(content)
+        if envelope:
+            action = envelope.group(2).strip()
+            if not action:
+                raise ModelProtocolError("Model response did not contain an action")
+            return (envelope.group(1) or "").strip(), action
+        if any(
+            tag in content.casefold() for tag in ("<think>", "</think>", "<answer>", "</answer>")
+        ):
+            raise ModelProtocolError("Malformed <think>/<answer> model envelope")
 
-        parsed_json = cls._try_parse_json(content)
-        if parsed_json is not None:
-            return parsed_json
-
-        marker_pos = cls._find_first_action_marker(content)
-        if marker_pos is not None:
-            thinking = content[:marker_pos].strip()
-            action = content[marker_pos:].strip()
-            return cls._clean_thinking(thinking), cls._clean_action(action)
-
-        return "", cls._clean_action(content)
-
-    @classmethod
-    def _try_parse_json(cls, content: str) -> tuple[str, str] | None:
-        candidate = content
-        if candidate.startswith("```"):
-            candidate = re.sub(r"^```(?:json)?\s*", "", candidate, flags=re.IGNORECASE)
-            candidate = re.sub(r"\s*```$", "", candidate)
-        try:
-            obj = json.loads(candidate)
-        except json.JSONDecodeError:
-            return None
-        if not isinstance(obj, dict):
-            return None
-        thinking = str(obj.get("thinking") or obj.get("thought") or "").strip()
-        action = obj.get("action")
-        if isinstance(action, str):
-            return thinking, cls._clean_action(action)
-        if isinstance(action, dict):
-            if action.get("type") == "finish" or action.get("_metadata") == "finish":
-                message = json.dumps(action.get("message", "Task completed"), ensure_ascii=False)
-                success = repr(action.get("success", True))
-                return thinking, f"finish(message={message}, success={success})"
-            action_name = action.get("action") or action.get("type")
-            kwargs = {k: v for k, v in action.items() if k not in {"type", "action", "_metadata"}}
-            parts = [f"action={json.dumps(action_name, ensure_ascii=False)}"]
-            for key, value in kwargs.items():
-                parts.append(f"{key}={repr(value)}")
-            return thinking, "do(" + ", ".join(parts) + ")"
-        if obj.get("type") == "finish":
-            message = json.dumps(obj.get("message", "Task completed"), ensure_ascii=False)
-            success = repr(obj.get("success", True))
-            return thinking, f"finish(message={message}, success={success})"
-        return None
-
-    @classmethod
-    def _find_first_action_marker(cls, content: str) -> int | None:
-        positions = [content.find(marker) for marker in cls.ACTION_MARKERS]
-        positions = [idx for idx in positions if idx >= 0]
-        return min(positions) if positions else None
-
-    @staticmethod
-    def _clean_thinking(text: str) -> str:
-        return text.replace("<think>", "").replace("</think>", "").strip()
-
-    @staticmethod
-    def _clean_action(text: str) -> str:
-        text = text.strip().replace("</answer>", "").strip()
-        text = re.sub(r"^```(?:python|json)?\s*", "", text, flags=re.IGNORECASE)
-        text = re.sub(r"\s*```$", "", text)
-        return text.strip()
+        if re.match(r"^(?:do|finish)\s*\(", content):
+            return "", content
+        raise ModelProtocolError(
+            "Compatibility responses must contain only one do(...) or finish(...) call"
+        )
 
 
 StreamCallback = Callable[[str], None]
@@ -255,11 +213,9 @@ class ModelClient:
             base_url=self.config.base_url,
             api_key=self.config.api_key,
             timeout=self.config.timeout,
-            http_client=DefaultHttpxClient(trust_env=False)
+            http_client=DefaultHttpxClient(trust_env=False),
         )
-        self.boundary_detector = StreamingBoundaryDetector(
-            markers=("<answer>", "do(", "finish(")
-        )
+        self.boundary_detector = StreamingBoundaryDetector(markers=("<answer>", "do(", "finish("))
 
     def request(
         self,
@@ -343,9 +299,7 @@ class ModelClient:
                     finish_reason = str(chunk_finish_reason)
                 delta = choice.delta
                 content = self._content_to_text(getattr(delta, "content", None))
-                reasoning = self._content_to_text(
-                    getattr(delta, "reasoning_content", None)
-                )
+                reasoning = self._content_to_text(getattr(delta, "reasoning_content", None))
                 if reasoning:
                     reasoning_parts.append(reasoning)
                     if print_stream:
@@ -375,9 +329,7 @@ class ModelClient:
             )
             message = choice.message
             content_parts.append(self._content_to_text(message.content))
-            reasoning = self._content_to_text(
-                getattr(message, "reasoning_content", None)
-            )
+            reasoning = self._content_to_text(getattr(message, "reasoning_content", None))
             if reasoning:
                 reasoning_parts.append(reasoning)
             time_to_first_token = time.monotonic() - start_time
@@ -389,13 +341,22 @@ class ModelClient:
         raw_content = "".join(content_parts).strip()
         reasoning_content = "".join(reasoning_parts).strip()
         if not raw_content:
-            raise ModelProtocolError("Model returned an empty content payload")
+            raise ModelProtocolError(
+                "Model returned an empty content payload",
+                raw_content=raw_content,
+            )
 
-        thinking, action = ModelResponseParser.parse(raw_content)
+        try:
+            thinking, action = ModelResponseParser.parse(raw_content)
+        except ModelProtocolError as exc:
+            raise ModelProtocolError(str(exc), raw_content=raw_content) from exc
         if not thinking and reasoning_content:
             thinking = reasoning_content
         if not action:
-            raise ModelProtocolError("Model response did not contain an action")
+            raise ModelProtocolError(
+                "Model response did not contain an action",
+                raw_content=raw_content,
+            )
         if time_to_thinking_end is None and thinking:
             time_to_thinking_end = total_time
         if print_stream:
@@ -474,16 +435,13 @@ class ModelClient:
     @staticmethod
     def _is_retryable(exc: Exception) -> bool:
         if isinstance(exc, ModelProtocolError):
-            return True
+            return False
         status_code = getattr(exc, "status_code", None)
-        if status_code in {408, 409, 429} or (
-            isinstance(status_code, int) and status_code >= 500
-        ):
+        if status_code in {408, 409, 429} or (isinstance(status_code, int) and status_code >= 500):
             return True
         name = type(exc).__name__.casefold()
         return any(
-            marker in name
-            for marker in ("timeout", "connection", "ratelimit", "internalserver")
+            marker in name for marker in ("timeout", "connection", "ratelimit", "internalserver")
         )
 
     def _print_metrics(

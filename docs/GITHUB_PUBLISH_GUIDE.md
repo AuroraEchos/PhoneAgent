@@ -26,16 +26,16 @@ git push origin main
 
 ## Create the tag and GitHub Release
 
-For example, to publish `v0.1.1`:
+For example, to publish `v0.1.2`:
 
 ```bash
-git tag -a v0.1.1 -m "PhoneAgent v0.1.1"
-git push origin v0.1.1
+git tag -a v0.1.2 -m "PhoneAgent v0.1.2"
+git push origin v0.1.2
 ```
 
 The `Release` workflow verifies that the tag matches the package version, runs lint and
 tests, builds the wheel and source distribution, generates `SHA256SUMS.txt`, and creates the
-GitHub Release using `RELEASE_NOTES_v0.1.1.md`.
+GitHub Release using `RELEASE_NOTES_v0.1.2.md`.
 
 ## Enable GitHub Pages
 

@@ -1,4 +1,4 @@
-"""Runtime event definitions for PhoneAgent."""
+"""Runtime event definitions shared by callbacks and trajectory persistence."""
 
 from __future__ import annotations
 
@@ -29,9 +29,25 @@ class EventType(str, Enum):
 
 @dataclass(slots=True)
 class AgentEvent:
-    """A structured event produced by the agent runtime."""
+    """One immutable-in-practice runtime event.
+
+    The same event instance is sent to callbacks and serialized into the run
+    trajectory, preventing timestamp or payload drift between two histories.
+    """
 
     type: EventType
     message: str = ""
     payload: dict[str, Any] = field(default_factory=dict)
+    step: int | None = None
     timestamp: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "timestamp": self.timestamp,
+            "type": self.type.value,
+            "message": self.message,
+            "payload": dict(self.payload),
+        }
+        if self.step is not None:
+            data["step"] = self.step
+        return data

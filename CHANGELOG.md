@@ -4,6 +4,35 @@ All notable changes to PhoneAgent will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses semantic versioning for public releases.
 
+## [0.1.2] - 2026-07-25
+
+### Changed
+
+- Reframed PhoneAgent as a focused Research Runtime / Evaluation Runtime without adding horizontal capabilities.
+- Consolidated app aliases, discovery, resolution, and pure-launch intent handling into `phoneagent.apps.catalog`; package-level imports from `phoneagent.apps` remain stable.
+- Restricted model output to the canonical `<think>/<answer>` envelope or one plain `do(...)` / `finish(...)` compatibility call.
+- Removed JSON, fenced-code, multi-action, trailing-text, and incomplete-string action repair.
+- Reduced recovery to `REPLAN`, `REOBSERVE`, `RETRY_ACTION`, `TAKEOVER`, and `ABORT`.
+- Made `AgentState.phase` the single live phase source and the trajectory event stream the only phase and execution history.
+- Moved model-context construction, trimming, app-context serialization, and protocol recovery into `phoneagent.model.context`.
+- Moved the app-context character budget to `AppCatalogConfig.prompt_char_budget` and reduced the default CLI help surface.
+- Updated the Web Console to consume top-level `AgentEvent.step` and preserve event-derived thinking, action, verification, and recovery views after task completion.
+- Rewrote the English README and aligned the website and architecture documentation with the implemented runtime.
+
+### Removed
+
+- Internal app modules `aliases`, `discovery`, `intents`, and `resolver`.
+- The independent `TaskStateMachine` transition history.
+- Separate relaunch, backtrack, and home-reset recovery branches.
+- Duplicate Agent-level app-context and strict-recovery configuration switches.
+
+### Safety and reliability
+
+- Protocol violations enter bounded strict-action recovery instead of guessed execution.
+- Only non-sensitive `Launch`, `Wait`, and `Home` actions may receive one automatic retry.
+- Callback consumers and trajectories receive the same `AgentEvent` timestamp, step, message, and payload.
+- Trajectory schema version remains `1.0`.
+
 ## [0.1.1] - 2026-07-24
 
 ### Added

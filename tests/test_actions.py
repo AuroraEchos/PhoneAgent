@@ -7,17 +7,14 @@ from phoneagent.actions import ActionHandler, ActionParseError, parse_action
 
 def test_parse_wrapped_tap_action() -> None:
     action = parse_action(
-        '<think>tap the visible button</think>'
-        '<answer>do(action="Tap", element=[500, 250])</answer>'
+        '<think>tap the visible button</think><answer>do(action="Tap", element=[500, 250])</answer>'
     )
     assert action == {"_metadata": "do", "action": "Tap", "element": [500, 250]}
 
 
-def test_parse_json_finish_action() -> None:
-    action = parse_action('{"type":"finish","message":"done","success":true}')
-    assert action["_metadata"] == "finish"
-    assert action["message"] == "done"
-    assert action["success"] is True
+def test_parser_rejects_json_action() -> None:
+    with pytest.raises(ActionParseError):
+        parse_action('{"type":"finish","message":"done","success":true}')
 
 
 def test_parser_rejects_executable_python() -> None:

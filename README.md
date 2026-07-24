@@ -10,9 +10,11 @@
 
 [项目主页](https://auroraechos.github.io/PhoneAgent/) · [GitHub](https://github.com/AuroraEchos/PhoneAgent)
 
-PhoneAgent 是一个面向真实 Android 设备的视觉语言智能体运行时（Vision-Language Agent Runtime）。
+PhoneAgent 是一个面向真实 Android 设备的视觉语言智能体研究与评测运行时
+（Research Runtime / Evaluation Runtime）。
 
-它通过屏幕观察、视觉语言模型推理、结构化动作执行和结果验证，让用户可以使用自然语言控制手机完成任务。
+它通过屏幕观察、视觉语言模型推理、严格动作协议、ADB 执行和结果验证，让研究者可以用
+自然语言驱动手机任务，并获得可复现、可审计的执行证据。
 
 核心执行流程：
 
@@ -20,16 +22,28 @@ PhoneAgent 是一个面向真实 Android 设备的视觉语言智能体运行时
 Observe → Plan → Execute → Verify → Recover → Repeat
 ```
 
-PhoneAgent 当前定位为一个开源研究与工程原型，重点探索可靠、可审计的手机 GUI Agent 执行链路。
+项目当前明确收敛于研究和评测基础设施，重点是可靠性、可解释失败和稳定轨迹，不追求横向
+增加工作流框架或应用特化能力。
 
 ## 核心能力
 
 - 基于截图的视觉理解和任务规划。
-- 使用结构化 Action Protocol 执行动作，而不是执行模型生成代码。
+- 只接受规范 `<think>...</think><answer>...</answer>` 或窄兼容的单个
+  `do(...)` / `finish(...)`，不猜测修复 JSON、代码块或残缺输出。
 - 支持 Android 应用发现和确定性启动。
 - 支持动作执行后的状态验证。
-- 支持有限恢复和重新规划。
-- 自动记录 Agent 执行轨迹，方便调试和分析。
+- 只使用重新规划、重新观察、安全动作重试、人工接管和终止五类有界恢复。
+- `AgentState.phase` 提供唯一实时阶段，统一 `AgentEvent` 记录完整审计历史。
+- 自动保存结构化执行轨迹，便于调试、回归分析和后续评测。
+
+## 运行时边界
+
+- 模型文本不会作为 Python 代码执行；动作必须通过 AST、白名单和参数校验。
+- 协议错误进入 strict-action recovery，不会尝试提取多个动作或修补字符串。
+- 只有 `Launch`、`Wait`、`Home` 可在无敏感标记时进行一次安全重试。
+- `Tap`、`Type`、`Swipe`、`Back` 等动作不会被自动重放。
+- 当前状态只保存运行所需的最新值；模型原文、思考、动作、验证和阶段历史以 trajectory
+  event stream 为准。
 
 ## 致谢
 
@@ -230,8 +244,9 @@ http://127.0.0.1:8765
 ```
 
 Web 服务启动后会完成一次设备与模型 API 预检，并在该服务进程存活期间复用同一个
-PhoneAgent 运行时。后续连续提交任务不会重复检查。页面还可以处理敏感操作确认、
-人工接管，并直接浏览和下载 `runs/trajectory_*.json`。
+PhoneAgent 运行时。后续连续提交任务不会重复检查。页面直接消费统一 `AgentEvent`，
+可以显示实时阶段、模型响应、动作、验证与恢复，处理敏感操作确认和人工接管，并浏览或
+下载 `runs/trajectory_*.json`。
 
 详细说明见 [`webui/README.md`](webui/README.md)。控制接口没有身份认证，建议保持默认的
 `127.0.0.1` 监听地址，不要直接暴露到局域网或公网。
@@ -279,16 +294,16 @@ print(result)
 runs/trajectory_xxxxx.json
 ```
 
-记录：
+轨迹中的事件流记录：
 
-- 当前状态
+- 阶段迁移
 - 模型请求
 - Agent 动作
 - 执行结果
 - 验证信息
 - 恢复过程
 
-方便调试和研究。
+`AgentState` 快照只表示任务结束时的最终状态，事件流是阶段和执行历史的权威来源。
 
 ## 开发
 

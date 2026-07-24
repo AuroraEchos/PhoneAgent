@@ -303,7 +303,7 @@ function summarizeEvent(event) {
   if (event.type === "model_response") return payload.thinking || event.message;
   if (event.type === "action") return payload.action ? JSON.stringify(payload.action) : event.message;
   if (event.type === "verification") return `${payload.status || ""} · ${payload.policy || ""}`;
-  if (event.type === "recovery") return payload.decision?.strategy || event.message;
+  if (event.type === "recovery") return payload.strategy || payload.decision?.strategy || event.message;
   if (event.type === "metrics") {
     const metrics = payload.metrics || {};
     return [`${Number(metrics.total_time || 0).toFixed(2)}s`, metrics.total_tokens && `${metrics.total_tokens} tokens`]
@@ -349,8 +349,8 @@ function renderEvents() {
     const title = document.createElement("b");
     title.textContent = eventLabels[event.type] || event.type;
     const step = document.createElement("span");
-    const payloadStep = event.payload?.step;
-    step.textContent = payloadStep ? `STEP ${payloadStep}` : `#${event.sequence}`;
+    const eventStep = Number.isInteger(event.step) ? event.step : event.payload?.step;
+    step.textContent = Number.isInteger(eventStep) ? `STEP ${eventStep}` : `#${event.sequence}`;
     header.append(title, step);
     const summary = document.createElement("p");
     summary.textContent = summarizeEvent(event);

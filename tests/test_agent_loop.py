@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 from phoneagent import AgentConfig, PhoneAgent
 from phoneagent.model import ModelResponse
@@ -85,7 +87,6 @@ def test_agent_loop_reuses_verified_observation_and_finishes(tmp_path) -> None:
             max_steps=4,
             verbose=False,
             app_awareness_enabled=False,
-            inject_app_context=False,
             trajectory_dir=str(tmp_path),
             verification=VerificationConfig(
                 settle_delay_seconds=0,
@@ -104,5 +105,9 @@ def test_agent_loop_reuses_verified_observation_and_finishes(tmp_path) -> None:
     assert agent.state.success is True
     assert device.taps == [(32, 32)]
     assert agent.last_trajectory_path is not None
-    assert agent.state.last_verification["observable_effect_verified"] is True
-    assert agent.state.last_verification["semantic_effect_verified"] is None
+    trajectory = json.loads(Path(agent.last_trajectory_path).read_text(encoding="utf-8"))
+    verification = next(
+        event["payload"] for event in trajectory["events"] if event["type"] == "verification"
+    )
+    assert verification["observable_effect_verified"] is True
+    assert verification["semantic_effect_verified"] is None

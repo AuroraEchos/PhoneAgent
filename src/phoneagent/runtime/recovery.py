@@ -1,4 +1,4 @@
-"""Bounded and safety-aware recovery policy for PhoneAgent."""
+"""Minimal bounded recovery policy for the research runtime."""
 
 from __future__ import annotations
 
@@ -10,29 +10,29 @@ from phoneagent.runtime.verification import VerificationResult
 
 
 class RecoveryStrategy(str, Enum):
-    NONE = "none"
+    """Small set of recovery operations with distinct safety semantics."""
+
     REPLAN = "replan"
     REOBSERVE = "reobserve"
     RETRY_ACTION = "retry_action"
-    BACKTRACK = "backtrack"
-    RELAUNCH = "relaunch"
-    HOME_RESET = "home_reset"
     TAKEOVER = "takeover"
     ABORT = "abort"
 
 
 @dataclass(slots=True)
 class RecoveryConfig:
-    """Limits and opt-ins for automatic recovery behavior."""
+    """Limits for automatic recovery.
+
+    Navigation resets and implicit relaunch branches were intentionally removed.
+    They enlarge the state space and are better expressed as explicit model
+    actions after a fresh observation.
+    """
 
     enabled: bool = True
     max_total_recoveries: int = 8
     max_attempts_per_failure: int = 2
     retry_delay_seconds: float = 0.35
     allow_safe_action_retry: bool = True
-    allow_relaunch: bool = True
-    allow_backtrack: bool = False
-    allow_home_reset: bool = False
     allow_takeover: bool = True
 
     def __post_init__(self) -> None:
@@ -95,7 +95,7 @@ class RecoveryOutcome:
 
 
 class RecoveryManager:
-    """Choose deterministic recovery without replaying risky side effects."""
+    """Choose one conservative recovery without replaying risky side effects."""
 
     _NON_RETRYABLE_ERRORS = {
         "user_cancelled",
@@ -118,8 +118,11 @@ class RecoveryManager:
         "verification_observation_failed",
         "device_unavailable",
     }
-    _PROTECTED_SCREEN_ERRORS = {"protected_or_blank_screen"}
-    _MODEL_PROTOCOL_ERRORS = {"action_parse_error", "model_output_truncated"}
+    _MODEL_PROTOCOL_ERRORS = {
+        "action_parse_error",
+        "model_output_truncated",
+        "model_protocol_error",
+    }
     _SAFE_RETRY_ACTIONS = {"Launch", "Wait", "Home"}
 
     def __init__(self, config: RecoveryConfig | None = None):
@@ -132,12 +135,7 @@ class RecoveryManager:
         self.attempts.clear()
 
     def mark_success(self) -> None:
-        """End the current failure episode after a verified/accepted step.
-
-        Per-failure retry counts describe consecutive recovery attempts. They
-        must not accumulate across unrelated failures later in a long task.
-        The task-level ``total_recoveries`` budget remains unchanged.
-        """
+        """End the current failure episode while preserving the run budget."""
         self.attempts.clear()
 
     def decide(self, context: RecoveryContext) -> RecoveryDecision:
@@ -155,197 +153,94 @@ class RecoveryManager:
                 attempt,
                 terminal=True,
             )
-        if (
-            self.config.max_total_recoveries > 0
-            and self.total_recoveries > self.config.max_total_recoveries
-        ):
+        if self._budget_exhausted(attempt):
             return self._decision(
                 RecoveryStrategy.ABORT,
-                "Total recovery budget was exhausted",
-                failure_key,
-                attempt,
-                terminal=True,
-            )
-        if (
-            self.config.max_attempts_per_failure > 0
-            and attempt > self.config.max_attempts_per_failure
-        ):
-            return self._decision(
-                RecoveryStrategy.ABORT,
-                f"Recovery attempts exhausted for {failure_key}",
+                "Recovery budget was exhausted",
                 failure_key,
                 attempt,
                 terminal=True,
             )
 
-        if context.error_code in self._NON_RETRYABLE_ERRORS:
-            if context.error_code == "user_cancelled":
-                return self._decision(
-                    RecoveryStrategy.ABORT,
-                    "User cancellation is terminal and must never be overridden",
-                    failure_key,
-                    attempt,
-                    terminal=True,
-                )
+        code = context.error_code
+        if code == "user_cancelled":
+            return self._decision(
+                RecoveryStrategy.ABORT,
+                "User cancellation is terminal and must never be overridden",
+                failure_key,
+                attempt,
+                terminal=True,
+            )
+        if code in self._NON_RETRYABLE_ERRORS:
             return self._decision(
                 RecoveryStrategy.REPLAN,
                 "The failure requires a different model strategy, not command replay",
                 failure_key,
                 attempt,
             )
-
-        if context.error_code in self._PROTECTED_SCREEN_ERRORS:
-            if self.config.allow_takeover:
-                return self._decision(
-                    RecoveryStrategy.TAKEOVER,
-                    "The screen is protected or blank; manual takeover is required",
-                    failure_key,
-                    attempt,
-                )
+        if code == "protected_or_blank_screen":
+            strategy = (
+                RecoveryStrategy.TAKEOVER if self.config.allow_takeover else RecoveryStrategy.ABORT
+            )
             return self._decision(
-                RecoveryStrategy.ABORT,
-                "Protected screen cannot be recovered automatically",
+                strategy,
+                "The screen is protected or blank; manual takeover is required",
                 failure_key,
                 attempt,
-                terminal=True,
+                terminal=strategy is RecoveryStrategy.ABORT,
             )
-
-        if context.error_code in self._OBSERVATION_ERRORS:
+        if code in self._OBSERVATION_ERRORS:
             return self._decision(
                 RecoveryStrategy.REOBSERVE,
                 "Acquire a fresh trusted observation before making another decision",
                 failure_key,
                 attempt,
             )
-
-        if context.error_code in self._MODEL_PROTOCOL_ERRORS:
+        if code in self._MODEL_PROTOCOL_ERRORS:
             return self._decision(
                 RecoveryStrategy.REPLAN,
-                "Retry once with a compact strict-action prompt and no malformed output history",
+                "Retry with the compact strict-action prompt",
                 failure_key,
                 attempt,
             )
 
-        if context.error_code == "verification_app_mismatch":
-            if action_name == "Launch" and self.config.allow_relaunch and attempt == 1:
+        if code == "verification_app_mismatch":
+            if self._can_retry(context.action, attempt):
                 return self._decision(
-                    RecoveryStrategy.RELAUNCH,
-                    "The requested application is not foreground; relaunch it once",
-                    failure_key,
-                    attempt,
-                )
-            if (
-                self.config.allow_home_reset
-                and context.consecutive_failures >= 2
-                and context.target_app
-            ):
-                return self._decision(
-                    RecoveryStrategy.HOME_RESET,
-                    "Relaunch did not restore the foreground app; reset navigation at Home",
+                    RecoveryStrategy.RETRY_ACTION,
+                    "The launch action may be retried once before replanning",
                     failure_key,
                     attempt,
                 )
             return self._decision(
                 RecoveryStrategy.REOBSERVE,
-                "Foreground app mismatch requires a fresh observation",
+                "Foreground mismatch requires a fresh observation",
                 failure_key,
                 attempt,
             )
 
-        if context.error_code in {"verification_no_effect", "verification_home_failed"}:
-            if (
-                self._safe_to_retry(context.action)
-                and self.config.allow_safe_action_retry
-                and attempt == 1
-            ):
+        if code in {
+            "verification_no_effect",
+            "verification_home_failed",
+            "launch_command_failed",
+            "action_execution_failed",
+            "repeated_action_blocked",
+        }:
+            if self._can_retry(context.action, attempt):
                 return self._decision(
                     RecoveryStrategy.RETRY_ACTION,
-                    "The action is idempotent enough for one bounded retry",
+                    "Retry one bounded idempotent action",
                     failure_key,
                     attempt,
                 )
-            if self.config.allow_backtrack and context.consecutive_failures >= 2:
-                return self._decision(
-                    RecoveryStrategy.BACKTRACK,
-                    "Repeated no-effect navigation failure; return one level",
-                    failure_key,
-                    attempt,
-                )
-            if (
-                self.config.allow_home_reset
-                and context.consecutive_failures >= 3
-                and context.target_app
-            ):
-                return self._decision(
-                    RecoveryStrategy.HOME_RESET,
-                    "Repeated no-effect failures reached the Home-reset threshold",
-                    failure_key,
-                    attempt,
-                )
-            return self._decision(
-                RecoveryStrategy.REPLAN,
-                "Do not replay a potentially side-effecting action; ask the model to replan",
-                failure_key,
-                attempt,
+            strategy = (
+                RecoveryStrategy.REOBSERVE
+                if code in {"action_execution_failed", "repeated_action_blocked"}
+                else RecoveryStrategy.REPLAN
             )
-
-        if context.error_code == "launch_command_failed":
-            if (
-                action_name == "Launch"
-                and self.config.allow_safe_action_retry
-                and attempt == 1
-            ):
-                return self._decision(
-                    RecoveryStrategy.RETRY_ACTION,
-                    "Direct package launch failed; retry once after catalog resolution",
-                    failure_key,
-                    attempt,
-                )
             return self._decision(
-                RecoveryStrategy.REPLAN,
-                "Application launch command failed after the bounded retry",
-                failure_key,
-                attempt,
-            )
-
-        if context.error_code in {"action_execution_failed", "repeated_action_blocked"}:
-            if (
-                self._safe_to_retry(context.action)
-                and self.config.allow_safe_action_retry
-                and attempt == 1
-            ):
-                return self._decision(
-                    RecoveryStrategy.RETRY_ACTION,
-                    "Retry a bounded idempotent action after transport/execution failure",
-                    failure_key,
-                    attempt,
-                )
-            if (
-                self.config.allow_home_reset
-                and context.consecutive_failures >= 3
-                and context.target_app
-            ):
-                return self._decision(
-                    RecoveryStrategy.HOME_RESET,
-                    "Repeated execution failures reached the Home-reset threshold",
-                    failure_key,
-                    attempt,
-                )
-            return self._decision(
-                RecoveryStrategy.REOBSERVE,
-                "Reobserve and choose a different action instead of blind replay",
-                failure_key,
-                attempt,
-            )
-
-        if (
-            self.config.allow_home_reset
-            and context.consecutive_failures >= 3
-            and context.target_app
-        ):
-            return self._decision(
-                RecoveryStrategy.HOME_RESET,
-                "Repeated failures reached the configured home-reset threshold",
+                strategy,
+                "Do not replay a potentially side-effecting action",
                 failure_key,
                 attempt,
             )
@@ -356,6 +251,20 @@ class RecoveryManager:
             failure_key,
             attempt,
         )
+
+    def _budget_exhausted(self, attempt: int) -> bool:
+        total_exhausted = (
+            self.config.max_total_recoveries > 0
+            and self.total_recoveries > self.config.max_total_recoveries
+        )
+        failure_exhausted = (
+            self.config.max_attempts_per_failure > 0
+            and attempt > self.config.max_attempts_per_failure
+        )
+        return total_exhausted or failure_exhausted
+
+    def _can_retry(self, action: dict[str, Any] | None, attempt: int) -> bool:
+        return attempt == 1 and self.config.allow_safe_action_retry and self._safe_to_retry(action)
 
     @classmethod
     def _safe_to_retry(cls, action: dict[str, Any] | None) -> bool:

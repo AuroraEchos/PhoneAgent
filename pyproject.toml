@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "phoneagent"
 dynamic = ["version"]
-description = "A vision-language Android agent runtime with deterministic app routing, bounded verification, and ADB execution."
+description = "A research and evaluation runtime for auditable vision-language Android agents."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
@@ -20,6 +20,8 @@ keywords = [
     "gui-agent",
     "vision-language-model",
     "automation",
+    "evaluation",
+    "research",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
