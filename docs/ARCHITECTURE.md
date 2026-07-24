@@ -1,6 +1,6 @@
 # PhoneAgent Architecture
 
-This document describes the execution path implemented by PhoneAgent `v0.1.0`.
+This document describes the execution path implemented by PhoneAgent `v0.1.1`.
 It is intentionally limited to behavior present in the repository.
 
 ## Runtime overview
@@ -116,14 +116,14 @@ by default.
 ### Trajectory
 
 The trajectory recorder writes structured events through a temporary file followed by an
-atomic replacement. The public `v0.1.0` trajectory schema is version `1.0`.
+atomic replacement. The public `v0.1.1` trajectory schema is version `1.0`.
 
 A trajectory can contain task text, model output, package/application names, timestamps,
 action parameters, and execution evidence. It should be redacted before publication.
 
 ## Trust boundaries
 
-PhoneAgent `v0.1.0` does not claim independent task-level correctness:
+PhoneAgent `v0.1.1` does not claim independent task-level correctness:
 
 - visual change does not prove that a coordinate action was semantically correct;
 - protected/secure screens may not be observable;

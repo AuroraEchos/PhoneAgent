@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install project
+        run: uv sync --extra dev
+
+      - name: Validate tag and release notes
+        run: |
+          VERSION="$(uv run python -c 'import phoneagent; print(phoneagent.__version__)')"
+          test "v${VERSION}" = "${GITHUB_REF_NAME}"
+          test -f "RELEASE_NOTES_${GITHUB_REF_NAME}.md"
+
+      - name: Validate lockfile
+        run: uv lock --check
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Test
+        run: uv run pytest -q
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum -- *.whl *.tar.gz > SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/*.whl \
+            dist/*.tar.gz \
+            dist/SHA256SUMS.txt \
+            --verify-tag \
+            --latest \
+            --title "PhoneAgent ${GITHUB_REF_NAME}" \
+            --notes-file "RELEASE_NOTES_${GITHUB_REF_NAME}.md"

@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f3efe6">
+  <title>PhoneAgent Web Console</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#top" aria-label="PhoneAgent Web Console">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i></span>
+      <span><b>PhoneAgent</b><small>Web Console</small></span>
+    </a>
+    <div class="topbar-meta">
+      <span class="connection-pill" data-connection="connecting"><i></i><span id="connectionLabel">正在连接</span></span>
+      <span class="session-clock">本次会话 <b id="sessionClock">00:00</b></span>
+    </div>
+  </header>
+
+  <main id="top" class="page-shell">
+    <section class="startup-panel" aria-labelledby="startupTitle">
+      <div class="panel-heading startup-heading">
+        <div>
+          <span class="eyebrow">ONE-TIME PREFLIGHT</span>
+          <h1 id="startupTitle">启动检查</h1>
+          <p id="startupMessage">Web 服务启动后会检查一次设备与模型；本服务不关闭便会复用检查结果。</p>
+        </div>
+        <button class="quiet-button" id="recheckButton" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18 6l2 5M3.9 13 6 18a7 7 0 0 0 11.9-3"/></svg>
+          重新检查
+        </button>
+      </div>
+      <div class="check-grid" id="checkList" aria-live="polite"></div>
+      <div class="runtime-identity">
+        <span><small>DEVICE</small><b id="deviceIdentity">等待检查</b></span>
+        <span><small>MODEL</small><b id="modelIdentity">等待检查</b></span>
+        <span><small>ENDPOINT</small><b id="endpointIdentity">等待检查</b></span>
+        <span class="reuse-note"><i></i><b id="reuseLabel">检查结果尚未建立</b></span>
+      </div>
+    </section>
+
+    <div class="dashboard-grid">
+      <div class="workspace-column">
+        <section class="composer-panel" aria-labelledby="taskTitle">
+          <div class="panel-heading compact-heading">
+            <div>
+              <span class="eyebrow">NEW TASK</span>
+              <h2 id="taskTitle">和 Agent 开始一次任务</h2>
+            </div>
+            <span class="ready-label" id="composerState">等待运行时就绪</span>
+          </div>
+          <form id="taskForm">
+            <label class="task-input-wrap" for="taskInput">
+              <textarea id="taskInput" maxlength="8000" rows="4" placeholder="例如：打开微信，进入美团小程序搜索咖啡，并在提交订单前停下。" required></textarea>
+              <span class="input-footer">
+                <span id="taskHint">启动检查通过后即可提交任务</span>
+                <button class="run-button" id="runButton" type="submit" disabled>
+                  <span>运行任务</span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+                </button>
+              </span>
+            </label>
+          </form>
+          <div class="example-row" aria-label="任务示例">
+            <span>示例</span>
+            <button type="button" data-example="打开微信并停留在首页。">打开微信</button>
+            <button type="button" data-example="打开微信，进入美团小程序搜索咖啡，并在提交订单前停下。">美团搜索</button>
+            <button type="button" data-example="打开系统设置，找到设备名称，并把名称作为最终答案返回。">查找设备名称</button>
+          </div>
+        </section>
+
+        <section class="execution-panel" aria-labelledby="executionTitle">
+          <div class="panel-heading execution-heading">
+            <div>
+              <span class="eyebrow">LIVE EXECUTION</span>
+              <h2 id="executionTitle">实时执行</h2>
+            </div>
+            <span class="task-status" id="taskStatus" data-status="idle"><i></i><b>空闲</b></span>
+          </div>
+
+          <div class="current-task">
+            <span>当前任务</span>
+            <p id="currentGoal">尚未提交任务</p>
+            <small id="taskResult"></small>
+          </div>
+
+          <div class="phase-rail" id="phaseRail" aria-label="Agent 执行阶段">
+            <span data-phase="observing"><i>01</i><b>观察</b></span>
+            <em></em>
+            <span data-phase="planning"><i>02</i><b>规划</b></span>
+            <em></em>
+            <span data-phase="executing"><i>03</i><b>执行</b></span>
+            <em></em>
+            <span data-phase="verifying"><i>04</i><b>验证</b></span>
+            <em></em>
+            <span data-phase="recovering"><i>05</i><b>恢复</b></span>
+          </div>
+
+          <div class="task-metrics">
+            <span><small>PHASE</small><b id="phaseMetric">idle</b></span>
+            <span><small>STEP</small><b id="stepMetric">0</b></span>
+            <span><small>FOREGROUND</small><b id="appMetric">—</b></span>
+            <span><small>RECOVERIES</small><b id="recoveryMetric">0</b></span>
+          </div>
+
+          <div class="insight-grid">
+            <article>
+              <header><span class="insight-icon insight-thinking">T</span><b>模型思考</b></header>
+              <pre id="thinkingOutput">等待模型响应</pre>
+            </article>
+            <article>
+              <header><span class="insight-icon insight-action">A</span><b>结构化动作</b></header>
+              <pre id="actionOutput">等待动作</pre>
+            </article>
+            <article>
+              <header><span class="insight-icon insight-proof">V</span><b>验证证据</b></header>
+              <div class="proof-grid" id="proofOutput">
+                <span data-proof="command"><i></i>command</span>
+                <span data-proof="observable"><i></i>observable</span>
+                <span data-proof="semantic"><i></i>semantic</span>
+              </div>
+              <p id="verificationMessage">等待验证结果</p>
+            </article>
+          </div>
+
+          <div class="event-toolbar">
+            <div>
+              <b>事件流</b>
+              <span id="eventCount">0 events</span>
+            </div>
+            <div class="filter-group" role="group" aria-label="事件筛选">
+              <button class="active" type="button" data-event-filter="all">全部</button>
+              <button type="button" data-event-filter="model">模型</button>
+              <button type="button" data-event-filter="action">动作</button>
+              <button type="button" data-event-filter="verification">验证</button>
+              <button type="button" data-event-filter="recovery">恢复</button>
+            </div>
+          </div>
+          <div class="event-feed" id="eventFeed" aria-live="polite">
+            <div class="empty-state"><span>◎</span><p>任务运行后，状态迁移和结构化事件会显示在这里。</p></div>
+          </div>
+        </section>
+      </div>
+
+      <aside class="side-column">
+        <section class="session-panel">
+          <div class="panel-heading compact-heading">
+            <div>
+              <span class="eyebrow">SESSION</span>
+              <h2>运行时会话</h2>
+            </div>
+          </div>
+          <div class="session-state">
+            <span class="device-orbit" aria-hidden="true"><i></i><b></b></span>
+            <div><small>PHONEAGENT RUNTIME</small><b id="runtimeState">正在初始化</b><span id="runtimeDetail">检查结果保存在当前服务进程中</span></div>
+          </div>
+          <ul class="session-facts">
+            <li><span>轨迹目录</span><code id="trajectoryDirectory">runs</code></li>
+            <li><span>设备连接</span><b id="deviceFact">—</b></li>
+            <li><span>模型服务</span><b id="modelFact">—</b></li>
+          </ul>
+          <p class="local-notice">控制接口默认仅监听本机。刷新页面不会重新进行预检；停止并重启 Web 服务后才会建立新的检查会话。</p>
+        </section>
+
+        <section class="trajectory-panel" aria-labelledby="trajectoryTitle">
+          <div class="panel-heading compact-heading">
+            <div>
+              <span class="eyebrow">RUNS / TRAJECTORIES</span>
+              <h2 id="trajectoryTitle">执行轨迹</h2>
+            </div>
+            <button class="icon-button" id="refreshTrajectories" type="button" aria-label="刷新轨迹">
+              <svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18 6l2 5M3.9 13 6 18a7 7 0 0 0 11.9-3"/></svg>
+            </button>
+          </div>
+          <label class="trajectory-search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>
+            <input id="trajectorySearch" type="search" placeholder="搜索任务或 Run ID">
+          </label>
+          <div id="trajectoryList" class="trajectory-list">
+            <div class="trajectory-empty">正在读取 runs…</div>
+          </div>
+
+          <div class="trajectory-detail" id="trajectoryDetail" hidden>
+            <button class="back-button" id="closeTrajectory" type="button">← 返回轨迹列表</button>
+            <div class="trajectory-detail-head">
+              <span class="trajectory-result" id="trajectoryResult">—</span>
+              <a id="downloadTrajectory" href="#">下载 JSON</a>
+            </div>
+            <h3 id="trajectoryTask">—</h3>
+            <div class="trajectory-detail-meta" id="trajectoryMeta"></div>
+            <div class="trajectory-event-list" id="trajectoryEvents"></div>
+          </div>
+        </section>
+      </aside>
+    </div>
+  </main>
+
+  <div class="prompt-backdrop" id="promptModal" hidden>
+    <section class="prompt-dialog" role="alertdialog" aria-modal="true" aria-labelledby="promptTitle" aria-describedby="promptMessage">
+      <span class="prompt-symbol" id="promptSymbol">!</span>
+      <span class="eyebrow" id="promptEyebrow">SENSITIVE ACTION</span>
+      <h2 id="promptTitle">需要你的确认</h2>
+      <p id="promptMessage"></p>
+      <div class="prompt-actions">
+        <button class="quiet-button" id="rejectPrompt" type="button">拒绝操作</button>
+        <button class="run-button" id="acceptPrompt" type="button"><span>确认并继续</span></button>
+      </div>
+      <small>Agent 线程正在等待，作出选择后才会继续。</small>
+    </section>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

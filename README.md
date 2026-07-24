@@ -215,6 +215,27 @@ uv run phoneagent \
   "打开浏览器搜索 PhoneAgent"
 ```
 
+## Web Console
+
+如果希望在浏览器里提交任务、查看实时事件和调试轨迹，可以启动独立的本地 Web Console：
+
+```bash
+uv run phoneagent-web --open-browser
+```
+
+默认地址：
+
+```text
+http://127.0.0.1:8765
+```
+
+Web 服务启动后会完成一次设备与模型 API 预检，并在该服务进程存活期间复用同一个
+PhoneAgent 运行时。后续连续提交任务不会重复检查。页面还可以处理敏感操作确认、
+人工接管，并直接浏览和下载 `runs/trajectory_*.json`。
+
+详细说明见 [`webui/README.md`](webui/README.md)。控制接口没有身份认证，建议保持默认的
+`127.0.0.1` 监听地址，不要直接暴露到局域网或公网。
+
 ## 应用别名
 
 部分 Android 系统无法稳定获取应用显示名称。

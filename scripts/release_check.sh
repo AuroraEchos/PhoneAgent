@@ -39,10 +39,13 @@ uv run python - <<'PY'
 from pathlib import Path
 import hashlib
 
+import phoneagent
+
 root = Path("dist")
-artifacts = sorted(root.glob("phoneagent-0.1.0*"))
+version = phoneagent.__version__
+artifacts = sorted(root.glob(f"phoneagent-{version}*"))
 if not artifacts:
-    raise SystemExit("No v0.1.0 distribution artifacts were built")
+    raise SystemExit(f"No v{version} distribution artifacts were built")
 
 lines = []
 for path in artifacts:

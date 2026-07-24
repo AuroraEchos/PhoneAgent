@@ -56,13 +56,18 @@ dev = [
 
 [project.scripts]
 phoneagent = "phoneagent.entrypoint:main"
+phoneagent-web = "webui.server:main"
 
 [tool.setuptools.dynamic]
 version = { attr = "phoneagent._version.__version__" }
 
 [tool.setuptools.packages.find]
-where = ["src"]
-include = ["phoneagent*"]
+where = ["src", "."]
+include = ["phoneagent*", "webui*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+webui = ["README.md", "static/*.html", "static/*.css", "static/*.js"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers --strict-config"
@@ -84,10 +89,10 @@ exclude_also = [
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["src", "tests"]
+src = ["src", "tests", "webui"]
 
 [tool.ruff.lint]
 select = ["E9", "F63", "F7", "F82"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["phoneagent"]
+known-first-party = ["phoneagent", "webui"]

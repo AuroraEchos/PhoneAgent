@@ -4,7 +4,7 @@ include README_EN.md
 include CHANGELOG.md
 include CONTRIBUTING.md
 include SECURITY.md
-include RELEASE_NOTES_v0.1.0.md
+include RELEASE_NOTES_v*.md
 include .env.example
 
 recursive-include docs *.md *.html *.css *.js *.svg *.png

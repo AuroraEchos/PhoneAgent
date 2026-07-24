@@ -18,7 +18,7 @@ def test_importing_package_does_not_load_dotenv(tmp_path) -> None:
             "-c",
             (
                 "import os, phoneagent; "
-                "assert phoneagent.__version__ == '0.1.0'; "
+                "assert phoneagent.__version__ == '0.1.1'; "
                 "assert 'PHONE_AGENT_IMPORT_SENTINEL' not in os.environ"
             ),
         ],
