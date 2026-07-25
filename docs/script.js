@@ -319,11 +319,52 @@ function setupLanguageToggle() {
   });
 }
 
-function setupHeader() {
+function setupScrollUI() {
   const header = document.querySelector("[data-header]");
-  const updateHeader = () => header?.classList.toggle("scrolled", window.scrollY > 18);
-  updateHeader();
-  window.addEventListener("scroll", updateHeader, { passive: true });
+  const bar = document.querySelector("[data-scroll-progress]");
+  const backToTop = document.querySelector("[data-back-to-top]");
+  if (!header && !bar && !backToTop) return;
+
+  let frameId = 0;
+  let scrollable = 0;
+
+  const measure = () => {
+    scrollable = Math.max(document.documentElement.scrollHeight - window.innerHeight, 0);
+  };
+
+  const update = () => {
+    frameId = 0;
+    const scrollY = Math.max(window.scrollY, 0);
+
+    header?.classList.toggle("scrolled", scrollY > 18);
+    backToTop?.classList.toggle("visible", scrollY > 720);
+
+    if (bar) {
+      const progress = scrollable > 0 ? Math.min(scrollY / scrollable, 1) : 0;
+      bar.style.transform = `scaleX(${progress})`;
+    }
+  };
+
+  const scheduleUpdate = () => {
+    if (frameId) return;
+    frameId = window.requestAnimationFrame(update);
+  };
+
+  const handleResize = () => {
+    measure();
+    scheduleUpdate();
+  };
+
+  backToTop?.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+  window.addEventListener("scroll", scheduleUpdate, { passive: true });
+  window.addEventListener("resize", handleResize, { passive: true });
+
+  if ("ResizeObserver" in window) {
+    new ResizeObserver(handleResize).observe(document.body);
+  }
+
+  measure();
+  update();
 }
 
 function setupNavigation() {
@@ -414,21 +455,6 @@ function showToast() {
   toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 1800);
 }
 
-function setupScrollProgress() {
-  const bar = document.querySelector("[data-scroll-progress]");
-  if (!bar) return;
-
-  const update = () => {
-    const scrollable = document.documentElement.scrollHeight - window.innerHeight;
-    const progress = scrollable > 0 ? Math.min(window.scrollY / scrollable, 1) : 0;
-    bar.style.transform = `scaleX(${progress})`;
-  };
-
-  update();
-  window.addEventListener("scroll", update, { passive: true });
-  window.addEventListener("resize", update, { passive: true });
-}
-
 function setupActiveNavigation() {
   const links = [...document.querySelectorAll("[data-nav-link]")];
   if (!links.length || !("IntersectionObserver" in window)) return;
@@ -473,16 +499,6 @@ function setupSpotlights() {
   });
 }
 
-function setupBackToTop() {
-  const button = document.querySelector("[data-back-to-top]");
-  if (!button) return;
-
-  const update = () => button.classList.toggle("visible", window.scrollY > 720);
-  button.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
-  update();
-  window.addEventListener("scroll", update, { passive: true });
-}
-
 function setupRuntimeDemo() {
   const steps = [...document.querySelectorAll("[data-demo-step]")];
   if (steps.length < 2) return;
@@ -519,10 +535,30 @@ function setupRuntimeDemo() {
   render();
   if (reducedMotion) return;
 
-  window.setInterval(() => {
+  let timerId;
+  const advance = () => {
     processingIndex = (processingIndex + 1) % steps.length;
     render();
-  }, 1800);
+  };
+  const start = () => {
+    if (!timerId) timerId = window.setInterval(advance, 1800);
+  };
+  const stop = () => {
+    window.clearInterval(timerId);
+    timerId = undefined;
+  };
+
+  const demo = document.querySelector(".hero-visual");
+  if (!demo || !("IntersectionObserver" in window)) {
+    start();
+    return;
+  }
+
+  const observer = new IntersectionObserver(([entry]) => {
+    if (entry.isIntersecting) start();
+    else stop();
+  });
+  observer.observe(demo);
 }
 
 function setupHeroParallax() {
@@ -553,12 +589,10 @@ function setupCurrentYear() {
 applyRepositoryLinks();
 applyLanguage(currentLanguage);
 setupLanguageToggle();
-setupHeader();
+setupScrollUI();
 setupNavigation();
-setupScrollProgress();
 setupActiveNavigation();
 setupSpotlights();
-setupBackToTop();
 setupRuntimeDemo();
 setupHeroParallax();
 setupRevealAnimations();
