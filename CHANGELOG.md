@@ -14,6 +14,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   literal-only argument validation.
 - Added regression tests for the real-device failure and republished the `v0.1.2` artifacts
   from the corrected commit.
+- Added a narrow, provider-neutral coordinate syntax adapter for explicit `<point>`,
+  `<point_2d>`, special point-token, and exact `{x, y}` action coordinates.
+- Kept bounding boxes, unknown tags, multiple points, non-numeric or executable values, extra
+  coordinate keys, and out-of-range coordinates behind the strict rejection boundary.
+- Added model-facing coordinate-format guidance and marker-aware recovery feedback, verified
+  by trajectory replay and a zero-recovery real-device run against another multimodal provider.
 
 ### Changed
 

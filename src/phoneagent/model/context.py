@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from phoneagent.actions.compatibility import has_provider_coordinate_marker
 from phoneagent.model.client import MessageBuilder
 
 
@@ -99,6 +100,7 @@ def prepare_protocol_recovery(
     *,
     reason: str,
     app_context: dict[str, Any],
+    rejected_action: str | None = None,
 ) -> str:
     """Discard a malformed pending turn and prepare one strict retry message."""
     if messages and messages[-1].get("role") == "user":
@@ -112,10 +114,19 @@ def prepare_protocol_recovery(
             f"- label: {candidate.get('label', '')}\n"
             f"- package: {candidate.get('package_name', '')}\n"
         )
+    coordinate_hint = ""
+    if has_provider_coordinate_marker(rejected_action):
+        coordinate_hint = (
+            "\nThe rejected action used a provider-specific coordinate marker. "
+            "Do not emit <point>, <point_2d>, <box>, <bbox>, or special point tokens. "
+            "Write coordinate arguments as bare numeric pairs, for example "
+            'element=[250,126] or start=[500,800], end=[500,200].\n'
+        )
     return (
         f"Previous model output was unusable: {reason}.\n"
         "Do not repeat prior reasoning or enumerate applications. "
         "Return exactly one valid action inside <answer>...</answer>."
+        f"{coordinate_hint}"
         f"{candidate_text}"
         "Use the current screen and resolved candidate. Do not copy placeholder values."
     )

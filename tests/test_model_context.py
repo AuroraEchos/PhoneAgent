@@ -36,6 +36,25 @@ class ModelContextTests(unittest.TestCase):
         compact_for_protocol_recovery(messages)
         self.assertEqual(len(messages), 3)
 
+    def test_protocol_recovery_explains_provider_point_markers(self) -> None:
+        messages = [{"role": "system", "content": "s"}, {"role": "user", "content": "bad"}]
+        text = prepare_protocol_recovery(
+            messages,
+            reason="invalid syntax",
+            app_context={},
+            rejected_action='do(action="Tap", element=[<point>250 126</point>])',
+        )
+        self.assertIn("provider-specific coordinate marker", text)
+        self.assertIn("element=[250,126]", text)
+
+        box_text = prepare_protocol_recovery(
+            [{"role": "system", "content": "s"}, {"role": "user", "content": "bad"}],
+            reason="invalid syntax",
+            app_context={},
+            rejected_action='do(action="Tap", element=[<bbox>10 20 30 40</bbox>])',
+        )
+        self.assertIn("provider-specific coordinate marker", box_text)
+
 
 if __name__ == "__main__":
     unittest.main()

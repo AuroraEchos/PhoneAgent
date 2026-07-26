@@ -36,7 +36,7 @@ def build_system_prompt(now: datetime | None = None) -> str:
 - finish(message="任务已完成", success=True)
 - finish(message="无法完成：明确原因", success=False)
 
-坐标规则：截图左上角为 [0,0]，右下角为 [999,999]。Tap、Double Tap、Long Press、Swipe 的坐标都必须位于 0..999。
+坐标规则：截图左上角为 [0,0]，右下角为 [999,999]。Tap、Double Tap、Long Press、Swipe 的坐标都必须位于 0..999。坐标参数必须直接写成两个裸数字，例如 element=[250,126]；禁止输出 <point>、<point_2d>、<box>、<bbox> 或其他 XML/HTML/模型专用定位标记。
 
 必须遵守：
 1. 先确认当前应用和页面，再操作。不要仅凭历史状态猜测当前界面。

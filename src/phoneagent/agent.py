@@ -436,6 +436,7 @@ class PhoneAgent:
                 self._context,
                 reason=message,
                 app_context=self._device_app_context,
+                rejected_action=response.action,
             )
             return self._handle_runtime_failure(
                 message=message,

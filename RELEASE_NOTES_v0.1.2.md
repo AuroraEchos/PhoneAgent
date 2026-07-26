@@ -10,6 +10,12 @@ heuristic behavior without adding horizontal capabilities.
 > message contained literal line breaks. The release was rebuilt from a corrected commit and
 > the original artifacts were replaced.
 
+> **Multi-provider compatibility update — 2026-07-26:** A subsequent real-device run with an
+> OpenAI-compatible multimodal provider exposed coordinates such as
+> `element=[<point>250 126</point>]`. The corrected release now includes a narrow provider
+> syntax adapter that canonicalizes explicit point markers and `{x, y}` coordinate objects
+> before applying the existing strict action validation.
+
 ## Protocol compatibility correction
 
 - Accept one terminal `do(...)` or `finish(...)` action with optional plain reasoning text
@@ -22,6 +28,22 @@ heuristic behavior without adding horizontal capabilities.
 - Verified on a connected vivo Android device with the task `打开设置,找到无线网络界面`:
   PhoneAgent launched Settings, entered the WLAN page, parsed the multiline completion, and
   finished with `phase=completed` and zero recoveries.
+
+## Multi-provider coordinate compatibility
+
+- Canonicalize explicit two-number coordinates from `<point>`, `<point_2d>`, and
+  `<|point_start|>...<|point_end|>` markers when they are attached to `element`, `start`, or
+  `end` action fields.
+- Accept exact coordinate objects such as `element={"x":250,"y":126}` and normalize them to
+  `[250,126]`.
+- Keep unknown tags, bounding boxes, multiple points, non-numeric values, executable
+  expressions, extra object keys, and coordinates outside `0..999` invalid. Bounding-box
+  centers are never inferred.
+- Preserve provider-marker text inside ordinary string values instead of rewriting it.
+- Add coordinate-specific system-prompt and strict-recovery guidance so compatible models can
+  correct their own output format.
+- Replayed every model action from the failing trajectory successfully, then completed a
+  low-risk real-device JD search-entry task with `phase=completed` and zero recoveries.
 
 ## Runtime consolidation
 

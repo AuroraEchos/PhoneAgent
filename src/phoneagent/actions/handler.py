@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from phoneagent.actions.compatibility import normalize_provider_action_syntax
 from phoneagent.devices import AndroidDevice
 
 
@@ -90,6 +91,7 @@ def parse_action(response: str) -> dict[str, Any]:
     recovery path instead of being executed heuristically.
     """
     action_text = _normalize_action_text(response)
+    action_text = normalize_provider_action_syntax(action_text)
     call_text = _extract_single_call(action_text)
     if re.match(r"^do\s*\(", call_text):
         return validate_action(_parse_do_call(call_text))
@@ -325,6 +327,8 @@ def _canonical_action_name(value: str) -> str | None:
 
 
 def _validate_relative_coordinate(value: Any, field_name: str) -> list[float | int]:
+    if isinstance(value, dict) and set(value) == {"x", "y"}:
+        value = [value["x"], value["y"]]
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         raise ActionParseError(f"{field_name} must be a two-element [x, y] coordinate")
     output: list[float | int] = []

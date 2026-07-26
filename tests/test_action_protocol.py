@@ -39,6 +39,47 @@ class ActionProtocolTests(unittest.TestCase):
         with self.assertRaises(ActionParseError):
             parse_action('do(action="Type", text="unterminated)')
 
+    def test_normalizes_provider_point_markers(self) -> None:
+        samples = (
+            'do(action="Tap", element=[<point>250 126</point>])',
+            'do(action="Tap", element=<point_2d>(250, 126)</point_2d>)',
+            'do(action="Tap", element="<point>250,126</point>")',
+            'do(action="Tap", element=<|point_start|>(250,126)<|point_end|>)',
+        )
+        for sample in samples:
+            with self.subTest(sample=sample):
+                action = parse_action(sample)
+                self.assertEqual(action["element"], [250, 126])
+
+    def test_normalizes_provider_swipe_points_and_coordinate_objects(self) -> None:
+        swipe = parse_action(
+            'do(action="Swipe", start=[<point>500 800</point>], '
+            'end=[<point>500 200</point>])'
+        )
+        self.assertEqual(swipe["start"], [500, 800])
+        self.assertEqual(swipe["end"], [500, 200])
+
+        tap = parse_action('do(action="Tap", element={"x": 250, "y": 126})')
+        self.assertEqual(tap["element"], [250, 126])
+
+    def test_provider_coordinate_compatibility_remains_strict(self) -> None:
+        invalid_samples = (
+            'do(action="Tap", element=[<point>1000 126</point>])',
+            'do(action="Tap", element=[<point>__import__("os") 126</point>])',
+            'do(action="Tap", element=[<box>10 20 30 40</box>])',
+            'do(action="Tap", element=[<point>10 20</point>, <point>30 40</point>])',
+            'do(action="Tap", element={"x": 250, "y": 126, "z": 1})',
+        )
+        for sample in invalid_samples:
+            with self.subTest(sample=sample), self.assertRaises(ActionParseError):
+                parse_action(sample)
+
+    def test_provider_marker_text_inside_string_is_not_rewritten(self) -> None:
+        action = parse_action(
+            'do(action="Type", text="保留 element=<point>10 20</point> 原文")'
+        )
+        self.assertEqual(action["text"], "保留 element=<point>10 20</point> 原文")
+
     def test_model_parser_uses_narrow_protocol(self) -> None:
         thinking, action = ModelResponseParser.parse(
             '<think>当前是首页</think><answer>do(action="Back")</answer>'
