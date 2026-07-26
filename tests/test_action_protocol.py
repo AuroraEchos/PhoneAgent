@@ -3,14 +3,16 @@ from __future__ import annotations
 import unittest
 
 from phoneagent.actions import ActionParseError, parse_action
-from phoneagent.model import ModelClient, ModelProtocolError, ModelResponseParser
+from phoneagent.model import ModelClient, ModelProtocolError, ModelResponse, ModelResponseParser
 
 
 class ActionProtocolTests(unittest.TestCase):
-    def test_canonical_action_envelope(self) -> None:
-        action = parse_action(
-            '<think>点击按钮</think><answer>do(action="Tap", element=[500, 300])</answer>'
+    def test_canonical_answer_envelope(self) -> None:
+        thinking, action_text = ModelResponseParser.parse(
+            '<answer>do(action="Tap", element=[500, 300])</answer>'
         )
+        action = parse_action(action_text)
+        self.assertEqual(thinking, "")
         self.assertEqual(action["action"], "Tap")
         self.assertEqual(action["element"], [500, 300])
 
@@ -80,17 +82,17 @@ class ActionProtocolTests(unittest.TestCase):
         )
         self.assertEqual(action["text"], "保留 element=<point>10 20</point> 原文")
 
-    def test_model_parser_uses_narrow_protocol(self) -> None:
+    def test_model_parser_uses_terminal_answer_protocol(self) -> None:
         thinking, action = ModelResponseParser.parse(
-            '<think>当前是首页</think><answer>do(action="Back")</answer>'
+            '<answer>do(action="Back")</answer>'
         )
-        self.assertEqual(thinking, "当前是首页")
+        self.assertEqual(thinking, "")
         self.assertEqual(action, 'do(action="Back")')
 
         thinking, action = ModelResponseParser.parse(
             "用户要求打开设置，找到无线网络界面。\n\n"
             "我应该使用 Launch 功能来打开设置应用。\n"
-            'do(action="Launch", app="设置")'
+            '<answer>do(action="Launch", app="设置")</answer>'
         )
         self.assertEqual(
             thinking,
@@ -100,27 +102,70 @@ class ActionProtocolTests(unittest.TestCase):
         self.assertEqual(action, 'do(action="Launch", app="设置")')
         self.assertEqual(parse_action(action)["action"], "Launch")
 
+        thinking, action = ModelResponseParser.parse(
+            '当前页面不是订单页面，需要返回。</think>\n'
+            '<answer>do(action="Back")</answer>'
+        )
+        self.assertEqual(thinking, "当前页面不是订单页面，需要返回。</think>")
+        self.assertEqual(action, 'do(action="Back")')
+
+        thinking, action = ModelResponseParser.parse(
+            '不要执行示例 do(action="Home")；应返回上一页。\n'
+            '<answer>do(action="Back")</answer>'
+        )
+        self.assertIn('do(action="Home")', thinking)
+        self.assertEqual(parse_action(action)["action"], "Back")
+
+    def test_model_parser_requires_one_terminal_answer_block(self) -> None:
+        invalid_samples = (
+            'do(action="Back")',
+            '先返回上一页 do(action="Back")',
+            '<answer>do(action="Back")',
+            'do(action="Back")</answer>',
+            '<answer></answer>',
+            '<answer>do(action="Back")</answer> trailing',
+            '<answer>do(action="Back")</answer><answer>do(action="Home")</answer>',
+            '```xml\n<answer>do(action="Back")</answer>\n```',
+        )
+        for sample in invalid_samples:
+            with self.subTest(sample=sample), self.assertRaises(ModelProtocolError):
+                ModelResponseParser.parse(sample)
+
+    def test_action_parser_only_accepts_extracted_action_text(self) -> None:
+        with self.assertRaises(ActionParseError):
+            parse_action('<answer>do(action="Back")</answer>')
+
+    def test_assistant_history_serializes_only_the_answer(self) -> None:
+        response = ModelResponse(
+            thinking="不会回填到模型上下文",
+            action='do(action="Back")',
+            raw_content='分析内容<answer>do(action="Back")</answer>',
+        )
+        self.assertEqual(
+            response.to_assistant_message_content(),
+            '<answer>do(action="Back")</answer>',
+        )
+
+    def test_malformed_answer_protocol_is_rejected(self) -> None:
         with self.assertRaises(ModelProtocolError):
             ModelResponseParser.parse('```json\n{"action":"Back"}\n```')
         with self.assertRaises(ModelProtocolError):
-            ModelResponseParser.parse('<answer>do(action="Back")')
-        with self.assertRaises(ModelProtocolError):
             ModelResponseParser.parse("")
-        with self.assertRaises(ModelProtocolError):
-            ModelResponseParser.parse("<answer></answer>")
 
-    def test_compatibility_response_still_rejects_extra_or_incomplete_actions(self) -> None:
+    def test_answer_still_rejects_extra_or_incomplete_actions(self) -> None:
         _, multiple = ModelResponseParser.parse(
-            '先返回上一页 do(action="Back") do(action="Home")'
+            '<answer>do(action="Back") do(action="Home")</answer>'
         )
         with self.assertRaises(ActionParseError):
             parse_action(multiple)
 
-        _, trailing = ModelResponseParser.parse('先返回上一页 do(action="Back") 然后继续')
+        _, trailing = ModelResponseParser.parse(
+            '<answer>do(action="Back") 然后继续</answer>'
+        )
         with self.assertRaises(ActionParseError):
             parse_action(trailing)
 
-        _, incomplete = ModelResponseParser.parse('返回上一页 do(action="Back"')
+        _, incomplete = ModelResponseParser.parse('<answer>do(action="Back"</answer>')
         with self.assertRaises(ActionParseError):
             parse_action(incomplete)
 

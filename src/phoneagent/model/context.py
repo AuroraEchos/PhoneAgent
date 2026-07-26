@@ -125,7 +125,8 @@ def prepare_protocol_recovery(
     return (
         f"Previous model output was unusable: {reason}.\n"
         "Do not repeat prior reasoning or enumerate applications. "
-        "Return exactly one valid action inside <answer>...</answer>."
+        "Return exactly one valid action inside <answer>...</answer>. "
+        "Do not emit <think> tags or any text after </answer>.\n"
         f"{coordinate_hint}"
         f"{candidate_text}"
         "Use the current screen and resolved candidate. Do not copy placeholder values."

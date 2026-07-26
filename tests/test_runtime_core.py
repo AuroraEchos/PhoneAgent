@@ -47,9 +47,7 @@ class _FinishModel:
         return ModelResponse(
             thinking="目标已经完成",
             action='finish(message="done", success=True)',
-            raw_content=(
-                '<think>目标已经完成</think><answer>finish(message="done", success=True)</answer>'
-            ),
+            raw_content='<answer>finish(message="done", success=True)</answer>',
         )
 
 

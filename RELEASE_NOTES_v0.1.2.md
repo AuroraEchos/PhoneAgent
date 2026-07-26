@@ -16,18 +16,34 @@ heuristic behavior without adding horizontal capabilities.
 > syntax adapter that canonicalizes explicit point markers and `{x, y}` coordinate objects
 > before applying the existing strict action validation.
 
-## Protocol compatibility correction
+> **Answer-only protocol update — 2026-07-27:** Cross-provider testing showed that requiring
+> both `<think>` and `<answer>` tags caused otherwise correct actions to be rejected when a model
+> emitted an unmatched thinking tag. The response protocol now uses one terminal answer block as
+> its only executable boundary; earlier thinking-envelope and unwrapped-action compatibility
+> paths are no longer part of the protocol.
 
-- Accept one terminal `do(...)` or `finish(...)` action with optional plain reasoning text
-  before it, matching the output format observed from `autoglm-phone`.
+## Answer-only model protocol
+
+- Require exactly one complete `<answer>...</answer>` block at the end of every model response.
+- Treat all preceding text as inert reasoning that is recorded for observability but never
+  parsed as an action. `<think>` no longer has any protocol meaning.
+- Reject unwrapped `do(...)` and `finish(...)` responses, multiple answer blocks, empty answers,
+  and any content after `</answer>`.
+- Serialize assistant history with the answer block alone so later turns are not prompted to
+  imitate the removed thinking-tag format.
 - Preserve literal CR/LF characters inside quoted action values before applying the existing
   AST and literal-only validation.
-- Continue to reject JSON actions, Markdown fences, multiple actions, trailing text,
-  executable expressions, malformed envelopes, unclosed strings, and incomplete calls.
-- Added regression coverage derived from the failing real-device trajectory.
+- Continue to reject JSON actions, Markdown-fenced actions, multiple actions, executable
+  expressions, unclosed strings, and incomplete calls.
+- Replayed the three malformed-envelope responses from the failing Meituan trajectory: each now
+  extracts and validates exactly the action inside its terminal answer block.
 - Verified on a connected vivo Android device with the task `打开设置,找到无线网络界面`:
   PhoneAgent launched Settings, entered the WLAN page, parsed the multiline completion, and
   finished with `phase=completed` and zero recoveries.
+- Reverified on 2026-07-27 with `glm-4.6v-flash`: all four raw responses used the answer-only
+  format and produced no model-protocol errors. One four-coordinate bounding box was safely
+  rejected and corrected by the model on the next turn; the task completed without changing any
+  WLAN setting.
 
 ## Multi-provider coordinate compatibility
 
@@ -57,11 +73,11 @@ heuristic behavior without adding horizontal capabilities.
 
 ## Strict model action protocol
 
-- The canonical response is `<think>...</think><answer>...</answer>`.
-- One terminal `do(...)` or `finish(...)`, optionally preceded by plain reasoning text,
-  remains available as a narrow compatibility path.
-- JSON actions, Markdown code fences, multiple actions, extra trailing output, malformed
-  envelopes, and incomplete strings are rejected rather than repaired.
+- The canonical and required response is `<answer>one do(...) or finish(...) call</answer>`.
+- Text before the answer is inert reasoning; the answer block is the only executable region.
+- Unwrapped actions, JSON actions, Markdown code fences around actions, multiple answers,
+  multiple actions, extra trailing output, malformed envelopes, and incomplete strings are
+  rejected rather than repaired.
 - Protocol violations enter bounded strict-action recovery and are never guessed into an
   executable action.
 

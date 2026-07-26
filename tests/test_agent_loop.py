@@ -73,12 +73,12 @@ def test_agent_loop_reuses_verified_observation_and_finishes(tmp_path) -> None:
             ModelResponse(
                 thinking="tap",
                 action='do(action="Tap", element=[500, 500])',
-                raw_content='<think>tap</think><answer>do(action="Tap", element=[500, 500])</answer>',
+                raw_content='<answer>do(action="Tap", element=[500, 500])</answer>',
             ),
             ModelResponse(
                 thinking="done",
                 action='finish(message="done", success=True)',
-                raw_content='<think>done</think><answer>finish(message="done", success=True)</answer>',
+                raw_content='<answer>finish(message="done", success=True)</answer>',
             ),
         ]
     )

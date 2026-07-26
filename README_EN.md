@@ -22,8 +22,8 @@ failure behavior over broad workflow integrations or app-specific capabilities.
 ## Runtime properties
 
 - Screenshot-grounded planning without requiring an accessibility tree.
-- Canonical `<think>...</think><answer>...</answer>` responses, plus a narrow compatibility
-  path for one plain `do(...)` or `finish(...)` call.
+- One terminal `<answer>...</answer>` is the only executable model-output region; preceding
+  text is reasoning, while unwrapped actions and malformed output are rejected.
 - No heuristic repair of JSON, Markdown code fences, multiple actions, or incomplete strings.
 - AST parsing, an action allow-list, parameter validation, and explicit confirmation for
   sensitive operations.

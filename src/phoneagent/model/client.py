@@ -107,7 +107,7 @@ class ModelResponse:
 
     def to_assistant_message_content(self) -> str:
         """Serialize response back into the prompt-compatible format."""
-        return f"<think>{self.thinking}</think><answer>{self.action}</answer>"
+        return f"<answer>{self.action}</answer>"
 
 
 class StreamingBoundaryDetector:
@@ -157,46 +157,42 @@ class StreamingBoundaryDetector:
 
 
 class ModelResponseParser:
-    """Split the canonical model envelope into thinking and action text.
+    """Split optional reasoning from the final executable answer.
 
-    The runtime accepts the documented ``<think>/<answer>`` envelope and a
-    Python-style action, optionally preceded by plain reasoning text, as a
-    narrow compatibility path. JSON and fenced Markdown are not repaired or
-    converted.
+    The only executable region is one terminal ``<answer>...</answer>`` block.
+    Any preceding text is inert reasoning. No separate thinking envelope or
+    unwrapped-action compatibility grammar is supported.
     """
 
-    ENVELOPE_RE = re.compile(
-        r"^\s*(?:<think>(.*?)</think>\s*)?<answer>(.*?)</answer>\s*$",
+    ANSWER_RE = re.compile(
+        r"^(?P<thinking>.*?)<answer>(?P<action>.*?)</answer>\s*$",
         re.DOTALL | re.IGNORECASE,
     )
+    ANSWER_OPEN_RE = re.compile(r"<answer>", re.IGNORECASE)
+    ANSWER_CLOSE_RE = re.compile(r"</answer>", re.IGNORECASE)
 
     @classmethod
     def parse(cls, raw_content: str) -> tuple[str, str]:
         content = (raw_content or "").strip()
         if not content:
             raise ModelProtocolError("Model response content is empty")
-        if content.startswith("```") or content.endswith("```"):
-            raise ModelProtocolError("Markdown code fences are not part of the model protocol")
-
-        envelope = cls.ENVELOPE_RE.fullmatch(content)
-        if envelope:
-            action = envelope.group(2).strip()
-            if not action:
-                raise ModelProtocolError("Model response did not contain an action")
-            return (envelope.group(1) or "").strip(), action
-        if any(
-            tag in content.casefold() for tag in ("<think>", "</think>", "<answer>", "</answer>")
+        if (
+            len(cls.ANSWER_OPEN_RE.findall(content)) != 1
+            or len(cls.ANSWER_CLOSE_RE.findall(content)) != 1
         ):
-            raise ModelProtocolError("Malformed <think>/<answer> model envelope")
+            raise ModelProtocolError(
+                "Model response must contain exactly one <answer>...</answer> block"
+            )
 
-        action_match = re.search(r"(?<!\w)(?:do|finish)\s*\(", content)
-        if action_match:
-            thinking = content[: action_match.start()].strip()
-            action = content[action_match.start() :].strip()
-            return thinking, action
-        raise ModelProtocolError(
-            "Compatibility responses must end with one do(...) or finish(...) call"
-        )
+        envelope = cls.ANSWER_RE.fullmatch(content)
+        if not envelope:
+            raise ModelProtocolError(
+                "The <answer>...</answer> block must be complete and end the model response"
+            )
+        action = envelope.group("action").strip()
+        if not action:
+            raise ModelProtocolError("Model response did not contain an action")
+        return envelope.group("thinking").strip(), action
 
 
 StreamCallback = Callable[[str], None]
@@ -219,7 +215,7 @@ class ModelClient:
             timeout=self.config.timeout,
             http_client=DefaultHttpxClient(trust_env=False),
         )
-        self.boundary_detector = StreamingBoundaryDetector(markers=("<answer>", "do(", "finish("))
+        self.boundary_detector = StreamingBoundaryDetector(markers=("<answer>",))
 
     def request(
         self,

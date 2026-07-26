@@ -85,10 +85,10 @@ def finish(
 def parse_action(response: str) -> dict[str, Any]:
     """Parse exactly one Python-style ``do(...)`` or ``finish(...)`` call.
 
-    ``<answer>...</answer>`` is accepted because it is the canonical model
-    envelope. JSON, Markdown code fences, multiple calls and malformed-string
-    repair are deliberately rejected so protocol errors enter the bounded
-    recovery path instead of being executed heuristically.
+    Model-envelope parsing is deliberately handled before this function. JSON,
+    Markdown code fences, multiple calls and malformed-string repair are
+    rejected so protocol errors enter bounded recovery instead of being
+    executed heuristically.
     """
     action_text = _normalize_action_text(response)
     action_text = normalize_provider_action_syntax(action_text)
@@ -179,15 +179,6 @@ def _normalize_action_text(text: str) -> str:
         raise ActionParseError("Model action is empty")
     if text.startswith("```") or text.endswith("```"):
         raise ActionParseError("Markdown code fences are not part of the action protocol")
-    answer_match = re.fullmatch(
-        r"(?:<think>.*?</think>\s*)?<answer>(.*?)</answer>",
-        text,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
-    if answer_match:
-        text = answer_match.group(1).strip()
-    elif "<answer>" in text.casefold() or "</answer>" in text.casefold():
-        raise ActionParseError("Malformed <answer> action envelope")
     return text
 
 

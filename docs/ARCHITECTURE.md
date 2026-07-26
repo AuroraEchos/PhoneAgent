@@ -85,13 +85,14 @@ summaries, app-context serialization, context trimming, and compact strict-proto
 The canonical response is:
 
 ```xml
-<think>brief reasoning</think>
 <answer>do(action="Tap", element=[500, 300])</answer>
 ```
 
-A single plain `do(...)` or `finish(...)` is accepted as a narrow compatibility path. JSON,
-Markdown fenced code, multiple calls, extra trailing text, malformed envelopes, and incomplete
-strings are rejected. The runtime does not guess or repair an executable action.
+The response must contain exactly one complete answer block at the end. Any text before it is
+inert reasoning and is retained only for observability; assistant history is serialized back to
+the model with the answer block alone. Unwrapped actions, JSON, Markdown fenced code, multiple
+answer blocks, multiple calls, extra trailing text, malformed envelopes, and incomplete strings
+are rejected. The runtime does not guess or repair an executable action.
 
 Accepted action text is parsed with Python AST/literal handling and validated against the
 action allow-list and parameter constraints. Model output is never evaluated or executed as

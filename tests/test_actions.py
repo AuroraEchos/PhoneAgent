@@ -5,10 +5,8 @@ import pytest
 from phoneagent.actions import ActionHandler, ActionParseError, parse_action
 
 
-def test_parse_wrapped_tap_action() -> None:
-    action = parse_action(
-        '<think>tap the visible button</think><answer>do(action="Tap", element=[500, 250])</answer>'
-    )
+def test_parse_tap_action() -> None:
+    action = parse_action('do(action="Tap", element=[500, 250])')
     assert action == {"_metadata": "do", "action": "Tap", "element": [500, 250]}
 
 

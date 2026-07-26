@@ -4,12 +4,16 @@ All notable changes to PhoneAgent will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses semantic versioning for public releases.
 
-## [0.1.2] - 2026-07-25; corrected 2026-07-26
+## [0.1.2] - 2026-07-25; corrected 2026-07-27
 
 ### Fixed in corrected release
 
-- Fixed a strict-protocol regression that rejected the recommended `autoglm-phone` response
-  format when plain reasoning text preceded one terminal `do(...)` or `finish(...)` call.
+- Replaced the dual `<think>/<answer>` model envelope and temporary unwrapped-action
+  compatibility path with one terminal `<answer>...</answer>` executable boundary.
+- Treat all text before the answer block as inert reasoning, require exactly one complete answer
+  block, and reject unwrapped actions or any output after `</answer>`.
+- Serialize assistant history with the answer block alone so subsequent turns do not imitate the
+  removed thinking-tag format.
 - Accepted literal line breaks inside closed, quoted action values while retaining AST-based,
   literal-only argument validation.
 - Added regression tests for the real-device failure and republished the `v0.1.2` artifacts
@@ -20,12 +24,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   coordinate keys, and out-of-range coordinates behind the strict rejection boundary.
 - Added model-facing coordinate-format guidance and marker-aware recovery feedback, verified
   by trajectory replay and a zero-recovery real-device run against another multimodal provider.
+- Replayed the malformed-envelope failure and completed a real-device WLAN navigation task with
+  `glm-4.6v-flash`: all four responses used answer-only output, with no model-protocol errors.
 
 ### Changed
 
 - Reframed PhoneAgent as a focused Research Runtime / Evaluation Runtime without adding horizontal capabilities.
 - Consolidated app aliases, discovery, resolution, and pure-launch intent handling into `phoneagent.apps.catalog`; package-level imports from `phoneagent.apps` remain stable.
-- Restricted model output to the canonical `<think>/<answer>` envelope or one terminal `do(...)` / `finish(...)` compatibility call with optional preceding reasoning text.
+- Restricted executable model output to one terminal `<answer>...</answer>` block; any preceding
+  text is non-executable reasoning.
 - Removed JSON, fenced-code, multi-action, trailing-text, and incomplete-string action repair.
 - Reduced recovery to `REPLAN`, `REOBSERVE`, `RETRY_ACTION`, `TAKEOVER`, and `ABORT`.
 - Made `AgentState.phase` the single live phase source and the trajectory event stream the only phase and execution history.
