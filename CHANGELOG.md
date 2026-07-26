@@ -4,13 +4,22 @@ All notable changes to PhoneAgent will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses semantic versioning for public releases.
 
-## [0.1.2] - 2026-07-25
+## [0.1.2] - 2026-07-25; corrected 2026-07-26
+
+### Fixed in corrected release
+
+- Fixed a strict-protocol regression that rejected the recommended `autoglm-phone` response
+  format when plain reasoning text preceded one terminal `do(...)` or `finish(...)` call.
+- Accepted literal line breaks inside closed, quoted action values while retaining AST-based,
+  literal-only argument validation.
+- Added regression tests for the real-device failure and republished the `v0.1.2` artifacts
+  from the corrected commit.
 
 ### Changed
 
 - Reframed PhoneAgent as a focused Research Runtime / Evaluation Runtime without adding horizontal capabilities.
 - Consolidated app aliases, discovery, resolution, and pure-launch intent handling into `phoneagent.apps.catalog`; package-level imports from `phoneagent.apps` remain stable.
-- Restricted model output to the canonical `<think>/<answer>` envelope or one plain `do(...)` / `finish(...)` compatibility call.
+- Restricted model output to the canonical `<think>/<answer>` envelope or one terminal `do(...)` / `finish(...)` compatibility call with optional preceding reasoning text.
 - Removed JSON, fenced-code, multi-action, trailing-text, and incomplete-string action repair.
 - Reduced recovery to `REPLAN`, `REOBSERVE`, `RETRY_ACTION`, `TAKEOVER`, and `ABORT`.
 - Made `AgentState.phase` the single live phase source and the trajectory event stream the only phase and execution history.

@@ -4,6 +4,25 @@ PhoneAgent `v0.1.2` is a focused runtime-consolidation release. It explicitly po
 project as a PhoneAgent Research Runtime / Evaluation Runtime and removes duplicated or
 heuristic behavior without adding horizontal capabilities.
 
+> **Corrected release — 2026-07-26:** The original `v0.1.2` artifacts rejected valid output
+> produced by the recommended `autoglm-phone` service when a single action was preceded by
+> plain reasoning text. They could also reject a completed `finish(...)` call when its quoted
+> message contained literal line breaks. The release was rebuilt from a corrected commit and
+> the original artifacts were replaced.
+
+## Protocol compatibility correction
+
+- Accept one terminal `do(...)` or `finish(...)` action with optional plain reasoning text
+  before it, matching the output format observed from `autoglm-phone`.
+- Preserve literal CR/LF characters inside quoted action values before applying the existing
+  AST and literal-only validation.
+- Continue to reject JSON actions, Markdown fences, multiple actions, trailing text,
+  executable expressions, malformed envelopes, unclosed strings, and incomplete calls.
+- Added regression coverage derived from the failing real-device trajectory.
+- Verified on a connected vivo Android device with the task `打开设置,找到无线网络界面`:
+  PhoneAgent launched Settings, entered the WLAN page, parsed the multiline completion, and
+  finished with `phase=completed` and zero recoveries.
+
 ## Runtime consolidation
 
 - App aliases, launcher discovery, query resolution, and pure-launch intent handling now live
@@ -17,7 +36,8 @@ heuristic behavior without adding horizontal capabilities.
 ## Strict model action protocol
 
 - The canonical response is `<think>...</think><answer>...</answer>`.
-- One plain `do(...)` or `finish(...)` remains available as a narrow compatibility path.
+- One terminal `do(...)` or `finish(...)`, optionally preceded by plain reasoning text,
+  remains available as a narrow compatibility path.
 - JSON actions, Markdown code fences, multiple actions, extra trailing output, malformed
   envelopes, and incomplete strings are rejected rather than repaired.
 - Protocol violations enter bounded strict-action recovery and are never guessed into an

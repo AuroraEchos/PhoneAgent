@@ -19,6 +19,14 @@ class ActionProtocolTests(unittest.TestCase):
         self.assertEqual(action["_metadata"], "finish")
         self.assertTrue(action["success"])
 
+    def test_finish_call_accepts_literal_newlines_in_message(self) -> None:
+        action = parse_action(
+            'finish(message="任务完成！\n\n当前显示的是 WLAN 设置页面。", success=True)'
+        )
+        self.assertEqual(action["_metadata"], "finish")
+        self.assertEqual(action["message"], "任务完成！\n\n当前显示的是 WLAN 设置页面。")
+        self.assertTrue(action["success"])
+
     def test_rejects_json_and_code_fence(self) -> None:
         with self.assertRaises(ActionParseError):
             parse_action('{"action":"Tap","element":[1,2]}')
@@ -37,16 +45,43 @@ class ActionProtocolTests(unittest.TestCase):
         )
         self.assertEqual(thinking, "当前是首页")
         self.assertEqual(action, 'do(action="Back")')
+
+        thinking, action = ModelResponseParser.parse(
+            "用户要求打开设置，找到无线网络界面。\n\n"
+            "我应该使用 Launch 功能来打开设置应用。\n"
+            'do(action="Launch", app="设置")'
+        )
+        self.assertEqual(
+            thinking,
+            "用户要求打开设置，找到无线网络界面。\n\n"
+            "我应该使用 Launch 功能来打开设置应用。",
+        )
+        self.assertEqual(action, 'do(action="Launch", app="设置")')
+        self.assertEqual(parse_action(action)["action"], "Launch")
+
         with self.assertRaises(ModelProtocolError):
             ModelResponseParser.parse('```json\n{"action":"Back"}\n```')
         with self.assertRaises(ModelProtocolError):
             ModelResponseParser.parse('<answer>do(action="Back")')
         with self.assertRaises(ModelProtocolError):
-            ModelResponseParser.parse('先返回上一页 do(action="Back")')
-        with self.assertRaises(ModelProtocolError):
             ModelResponseParser.parse("")
         with self.assertRaises(ModelProtocolError):
             ModelResponseParser.parse("<answer></answer>")
+
+    def test_compatibility_response_still_rejects_extra_or_incomplete_actions(self) -> None:
+        _, multiple = ModelResponseParser.parse(
+            '先返回上一页 do(action="Back") do(action="Home")'
+        )
+        with self.assertRaises(ActionParseError):
+            parse_action(multiple)
+
+        _, trailing = ModelResponseParser.parse('先返回上一页 do(action="Back") 然后继续')
+        with self.assertRaises(ActionParseError):
+            parse_action(trailing)
+
+        _, incomplete = ModelResponseParser.parse('返回上一页 do(action="Back"')
+        with self.assertRaises(ActionParseError):
+            parse_action(incomplete)
 
     def test_protocol_errors_are_not_retried_as_transport_failures(self) -> None:
         self.assertFalse(ModelClient._is_retryable(ModelProtocolError("invalid envelope")))

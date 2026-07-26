@@ -273,6 +273,7 @@ def _parse_finish_call(call_text: str) -> dict[str, Any]:
 
 
 def _parse_call_ast(call_text: str) -> ast.Call:
+    call_text = _escape_raw_newlines_in_quoted_strings(call_text)
     try:
         tree = ast.parse(call_text, mode="eval")
     except SyntaxError as exc:
@@ -280,6 +281,42 @@ def _parse_call_ast(call_text: str) -> ast.Call:
     if not isinstance(tree.body, ast.Call):
         raise ActionParseError("Action must be a function call")
     return tree.body
+
+
+def _escape_raw_newlines_in_quoted_strings(text: str) -> str:
+    """Preserve model-generated multiline values as valid string literals.
+
+    Some compatible models place literal line breaks inside a quoted ``message``
+    or ``text`` value. Python's single-quoted string grammar rejects those line
+    breaks, so escape only CR/LF characters that occur inside a quoted value.
+    The resulting call still passes through ``ast.parse`` and ``literal_eval``.
+    """
+    output: list[str] = []
+    quote: str | None = None
+    escaped = False
+    for char in text:
+        if quote is None:
+            output.append(char)
+            if char in {'"', "'"}:
+                quote = char
+            continue
+
+        if escaped:
+            output.append(char)
+            escaped = False
+        elif char == "\\":
+            output.append(char)
+            escaped = True
+        elif char == quote:
+            output.append(char)
+            quote = None
+        elif char == "\r":
+            output.append("\\r")
+        elif char == "\n":
+            output.append("\\n")
+        else:
+            output.append(char)
+    return "".join(output)
 
 
 def _canonical_action_name(value: str) -> str | None:

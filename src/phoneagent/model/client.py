@@ -160,8 +160,9 @@ class ModelResponseParser:
     """Split the canonical model envelope into thinking and action text.
 
     The runtime accepts the documented ``<think>/<answer>`` envelope and a
-    plain Python-style action as a narrow compatibility path. JSON and fenced
-    Markdown are not repaired or converted.
+    Python-style action, optionally preceded by plain reasoning text, as a
+    narrow compatibility path. JSON and fenced Markdown are not repaired or
+    converted.
     """
 
     ENVELOPE_RE = re.compile(
@@ -188,10 +189,13 @@ class ModelResponseParser:
         ):
             raise ModelProtocolError("Malformed <think>/<answer> model envelope")
 
-        if re.match(r"^(?:do|finish)\s*\(", content):
-            return "", content
+        action_match = re.search(r"(?<!\w)(?:do|finish)\s*\(", content)
+        if action_match:
+            thinking = content[: action_match.start()].strip()
+            action = content[action_match.start() :].strip()
+            return thinking, action
         raise ModelProtocolError(
-            "Compatibility responses must contain only one do(...) or finish(...) call"
+            "Compatibility responses must end with one do(...) or finish(...) call"
         )
 
 
