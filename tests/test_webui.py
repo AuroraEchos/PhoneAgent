@@ -115,14 +115,14 @@ def _model_check(_config: Any) -> bool:
     return True
 
 
-def test_web_config_uses_catalog_owned_prompt_budget(
+def test_web_config_uses_lazy_launch_timeout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("PHONE_AGENT_MAX_APP_CONTEXT_CHARS", "4096")
+    monkeypatch.setenv("PHONE_AGENT_APP_LAUNCH_TIMEOUT_SECONDS", "9.5")
     _model, agent, _trajectory = _build_configs(tmp_path)
 
-    assert agent.app_catalog.prompt_char_budget == 4096
-    assert not hasattr(agent, "max_app_context_chars")
+    assert agent.app_launch_timeout_seconds == 9.5
+    assert not hasattr(agent, "app_catalog")
 
 
 def test_console_checks_once_and_reuses_agent_for_tasks(tmp_path: Path) -> None:
@@ -258,6 +258,16 @@ def test_http_console_serves_frontend_and_accepts_task(tmp_path: Path) -> None:
             html = response.read().decode("utf-8")
             assert response.status == 200
             assert "PhoneAgent Web Console" in html
+            assert 'class="preflight-gate"' in html
+            assert 'class="app-surface"' in html
+            assert 'class="history-sidebar"' in html
+            assert 'id="sidebarCollapse"' in html
+            assert 'class="conversation-shell"' in html
+            assert 'class="composer-dock"' in html
+            assert 'class="dashboard-grid"' not in html
+            assert 'class="execution-panel"' not in html
+            assert 'class="sidebar-runtime"' not in html
+            assert html.index('class="conversation-shell"') < html.index('class="preflight-gate"')
             assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
 
         request = Request(

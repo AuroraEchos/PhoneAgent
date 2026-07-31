@@ -30,7 +30,7 @@ class ModelContextTests(unittest.TestCase):
             {"role": "assistant", "content": "a"},
             {"role": "user", "content": "bad"},
         ]
-        text = prepare_protocol_recovery(messages, reason="invalid", app_context={})
+        text = prepare_protocol_recovery(messages, reason="invalid")
         self.assertEqual(len(messages), 3)
         self.assertIn("exactly one valid action", text)
         compact_for_protocol_recovery(messages)
@@ -41,7 +41,6 @@ class ModelContextTests(unittest.TestCase):
         text = prepare_protocol_recovery(
             messages,
             reason="invalid syntax",
-            app_context={},
             rejected_action='do(action="Tap", element=[<point>250 126</point>])',
         )
         self.assertIn("provider-specific coordinate marker", text)
@@ -50,7 +49,6 @@ class ModelContextTests(unittest.TestCase):
         box_text = prepare_protocol_recovery(
             [{"role": "system", "content": "s"}, {"role": "user", "content": "bad"}],
             reason="invalid syntax",
-            app_context={},
             rejected_action='do(action="Tap", element=[<bbox>10 20 30 40</bbox>])',
         )
         self.assertIn("provider-specific coordinate marker", box_text)

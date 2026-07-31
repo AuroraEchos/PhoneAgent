@@ -27,8 +27,8 @@ failure behavior over broad workflow integrations or app-specific capabilities.
 - No heuristic repair of JSON, Markdown code fences, multiple actions, or incomplete strings.
 - AST parsing, an action allow-list, parameter validation, and explicit confirmation for
   sensitive operations.
-- Dynamic Android app discovery, confidence-aware resolution, and deterministic launch for
-  high-confidence pure open-app tasks.
+- Lazy deterministic app launch: a model-issued `Launch` resolves a built-in alias or explicit
+  package, checks installation, starts it through ADB, and verifies the foreground package.
 - Separate command, observable-effect, and deterministic semantic evidence.
 - Five recovery outcomes only: replan, reobserve, retry a safe action, request takeover, or
   abort.
@@ -115,26 +115,24 @@ so keep the default localhost binding unless you add your own protected reverse 
 
 See [webui/README.md](webui/README.md) for details.
 
-## App aliases
+## App launch aliases
 
-Some Android builds do not expose reliable display labels. An optional alias file can map
-human names to package names:
-
-```json
-{
-  "微信": "com.tencent.mm",
-  "淘宝": "com.taobao.taobao"
-}
-```
+PhoneAgent does not scan or cache an application catalog when a task starts. When the model
+emits `Launch`, the runtime resolves the supplied name through the built-in compatibility table
+in `src/phoneagent/config/apps.py`, or accepts an explicit Android package name. It then checks
+that package on the selected device and launches it lazily.
 
 ```bash
-uv run phoneagent \
-  --app-aliases-file app_aliases.json \
-  "打开微信"
+# All built-in human-readable aliases
+uv run phoneagent --list-configured-apps
+
+# Configured packages that are currently installed on the selected device
+uv run phoneagent --list-apps
 ```
 
-The package-level `phoneagent.apps` imports remain the supported public API. Internal app
-implementation modules were consolidated into `phoneagent.apps.catalog`.
+Add commonly used human-readable names to `APP_PACKAGES` when needed. The model may also emit an
+exact package such as `com.example.app`; an installed application that is absent from the static
+table is not discovered or injected into the model prompt automatically.
 
 ## Python API
 
@@ -171,6 +169,8 @@ uv run pytest -q
   actions.
 - Full task completion is currently reported by the planning model.
 - Protected or authentication-sensitive screens may require manual takeover.
+- Human-readable `Launch` names are limited to the built-in compatibility aliases; unknown apps
+  require an explicit Android package or an ordinary visual GUI path.
 - Real-device behavior varies across Android versions, vendor ROMs, launchers, device
   permissions, and model providers.
 

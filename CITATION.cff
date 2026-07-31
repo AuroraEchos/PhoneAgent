@@ -5,8 +5,8 @@ type: software
 authors:
   - family-names: "Liu"
     given-names: "Wenhao"
-version: "0.1.2"
-date-released: "2026-07-25"
+version: "0.1.3"
+date-released: "2026-07-31"
 url: "https://github.com/AuroraEchos/PhoneAgent"
 repository-code: "https://github.com/AuroraEchos/PhoneAgent"
 license: Apache-2.0

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from phoneagent.apps import AppMatchType, AppResolver, InstalledApp, extract_pure_launch_intent
-from phoneagent.config.apps import get_package_name
+from phoneagent.config.apps import (
+    get_canonical_app_name,
+    get_package_name,
+    list_canonical_app_mapping,
+)
 
 
 def test_chinese_settings_alias_is_supported() -> None:
@@ -9,24 +12,26 @@ def test_chinese_settings_alias_is_supported() -> None:
     assert get_package_name("系统设置") == "com.android.settings"
 
 
-def test_resolver_prefers_exact_alias() -> None:
-    apps = [
-        InstalledApp(
-            label="Settings",
-            package_name="com.android.settings",
-            aliases=("设置", "系统设置"),
-        ),
-        InstalledApp(label="WeChat", package_name="com.tencent.mm", aliases=("微信",)),
-    ]
-    result = AppResolver().resolve("设置", apps)
-    assert result.matched
-    assert result.matched_app is not None
-    assert result.matched_app.package_name == "com.android.settings"
-    assert result.match_type is AppMatchType.ALIAS_EXACT
+def test_alias_lookup_is_case_and_whitespace_tolerant() -> None:
+    assert get_package_name("  WE CHAT ") == "com.tencent.mm"
+    assert get_package_name("瑞幸 咖啡") == "com.lucky.luckyclient"
 
 
-def test_pure_launch_intent_is_conservative() -> None:
-    intent = extract_pure_launch_intent("打开微信")
-    assert intent is not None
-    assert intent.query == "微信"
-    assert extract_pure_launch_intent("打开微信，然后搜索张三") is None
+def test_raw_android_package_is_accepted() -> None:
+    assert get_package_name("com.example.custom_app") == "com.example.custom_app"
+
+
+def test_unknown_human_name_is_not_guessed() -> None:
+    assert get_package_name("微信助手") is None
+
+
+def test_first_alias_is_the_canonical_display_name() -> None:
+    assert get_canonical_app_name("com.tencent.mm") == "微信"
+    assert get_canonical_app_name("com.example.unknown") is None
+
+
+def test_canonical_mapping_returns_an_independent_copy() -> None:
+    mapping = list_canonical_app_mapping()
+    mapping["com.tencent.mm"] = "changed"
+
+    assert get_canonical_app_name("com.tencent.mm") == "微信"

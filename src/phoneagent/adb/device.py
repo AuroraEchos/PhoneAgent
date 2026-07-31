@@ -7,7 +7,7 @@ import re
 import time
 
 from phoneagent.adb.command import ADBCommandError, run_adb
-from phoneagent.config.apps import APP_PACKAGES, get_package_name
+from phoneagent.config.apps import APP_PACKAGES, get_canonical_app_name, get_package_name
 from phoneagent.config.timing import TIMING_CONFIG
 
 
@@ -79,11 +79,8 @@ def _extract_focused_package(output: str) -> str | None:
 
 
 def _package_to_app_name(package: str) -> str | None:
-    """Map package name back to configured app alias."""
-    for app_name, app_package in APP_PACKAGES.items():
-        if app_package == package:
-            return app_name
-    return None
+    """Map a package name back to its canonical configured app name."""
+    return get_canonical_app_name(package)
 
 
 def get_current_app(device_id: str | None = None) -> str:
@@ -349,32 +346,59 @@ def home(device_id: str | None = None, delay: float | None = None) -> None:
     _sleep_after_action(delay)
 
 
-def launch_app(
-    app_name: str,
+def is_package_installed(
+    package_name: str,
+    device_id: str | None = None,
+) -> bool:
+    """Return whether ``package_name`` is installed on the selected device."""
+    package = str(package_name or "").strip()
+    if not package:
+        return False
+    result = run_adb(
+        ["shell", "pm", "path", package],
+        device_id=device_id,
+        timeout=DEFAULT_QUERY_TIMEOUT,
+        check=False,
+        retries=1,
+    )
+    return result.returncode == 0 and any(
+        line.strip().startswith("package:") for line in (result.stdout or "").splitlines()
+    )
+
+
+def list_installed_packages(device_id: str | None = None) -> set[str]:
+    """Return all package names reported by Android PackageManager."""
+    result = run_adb(
+        ["shell", "pm", "list", "packages"],
+        device_id=device_id,
+        timeout=DEFAULT_QUERY_TIMEOUT,
+        retries=1,
+    )
+    packages: set[str] = set()
+    for line in (result.stdout or "").splitlines():
+        value = line.strip()
+        if value.startswith("package:"):
+            package = value[len("package:") :].strip()
+            if package:
+                packages.add(package)
+    return packages
+
+
+def launch_package(
+    package_name: str,
     device_id: str | None = None,
     delay: float | None = None,
-) -> bool:
-    """
-    Launch an app by configured app alias.
-
-    Args:
-        app_name: The app name or alias. Must exist in APP_PACKAGES.
-        device_id: Optional ADB device ID.
-        delay: Delay in seconds after launching. If None, uses configured default.
-
-    Returns:
-        True if app was launched.
-        False if app_name is not configured.
-
-    Raises:
-        ADBCommandError if adb reports a launch failure for a configured package.
-    """
+    *,
+    timeout: float = DEFAULT_LAUNCH_TIMEOUT,
+) -> None:
+    """Launch an installed package through its launcher intent."""
+    package = str(package_name or "").strip()
+    if not package:
+        raise ValueError("package_name cannot be empty")
+    if timeout <= 0:
+        raise ValueError("timeout must be positive")
     if delay is None:
         delay = TIMING_CONFIG.device.default_launch_delay
-
-    package = get_package_name(app_name)
-    if package is None:
-        return False
 
     result = run_adb(
         [
@@ -387,13 +411,10 @@ def launch_app(
             "1",
         ],
         device_id=device_id,
-        timeout=DEFAULT_LAUNCH_TIMEOUT,
+        timeout=timeout,
         check=False,
     )
-
-    output = _combined_output(result)
-    output_lower = output.lower()
-
+    output_lower = _combined_output(result).lower()
     failed_markers = (
         "error:",
         "no activities found",
@@ -401,7 +422,6 @@ def launch_app(
         "permission denied",
         "unable to resolve",
     )
-
     if result.returncode != 0 or any(marker in output_lower for marker in failed_markers):
         raise ADBCommandError(
             result.args,
@@ -410,8 +430,19 @@ def launch_app(
             stderr=result.stderr,
             reason=f"failed to launch package {package}",
         )
-
     _sleep_after_action(delay)
+
+
+def launch_app(
+    app_name: str,
+    device_id: str | None = None,
+    delay: float | None = None,
+) -> bool:
+    """Resolve a configured alias or package and launch it through ADB."""
+    package = get_package_name(app_name)
+    if package is None:
+        return False
+    launch_package(package, device_id=device_id, delay=delay)
     return True
 
 

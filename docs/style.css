@@ -1432,27 +1432,6 @@ body {
 }
 .architecture-flow-sequential .flow-node-user { width: 210px; }
 .architecture-flow-sequential .flow-link { height: 18px; }
-.flow-shortcut {
-  width: min(100%, 296px);
-  margin: 7px auto 0;
-  padding: 7px 10px;
-  border: 1px dashed rgba(159, 79, 56, .28);
-  border-radius: 9px;
-  background: rgba(255, 253, 248, .48);
-  color: var(--text-muted);
-  font-size: 8px;
-  line-height: 1.4;
-  text-align: center;
-}
-.flow-shortcut span {
-  margin-right: 6px;
-  color: var(--violet-bright);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .06em;
-}
-.flow-shortcut small { font-size: inherit; }
-
 .flow-link {
   position: relative;
   z-index: 1;
@@ -1784,7 +1763,6 @@ body {
   .architecture-flow-sequential .flow-node { width: min(100%, 250px); }
   .architecture-flow-sequential .flow-node-user { width: 205px; }
   .architecture-flow-sequential .flow-link { height: 15px; }
-  .flow-shortcut { width: min(100%, 250px); }
   .flow-node-user { width: 205px; }
   .flow-node-runtime,
   .flow-node-executor { width: 230px; }

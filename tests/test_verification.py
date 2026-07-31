@@ -35,39 +35,21 @@ def test_direct_launch_verifies_semantic_app_effect() -> None:
     assert result.semantic_effect_verified is True
 
 
-def test_launcher_search_requires_observed_change() -> None:
+def test_direct_launch_rejects_foreground_package_mismatch() -> None:
     verifier = ActionVerifier()
-    before = make_observation(10, app="System Home", package="com.android.launcher")
     result = verifier.verify(
-        action=do(action="Launch", app="Unknown App"),
+        action=do(action="Launch", app="微信"),
         execution=ActionResult(
             True,
             False,
-            metadata={"visual_completion_required": True},
-        ),
-        before=before,
-        after=before,
-    )
-    assert result.status is VerificationStatus.FAILED
-    assert result.error_code == "launcher_search_not_observed"
-    assert result.observable_effect_verified is False
-    assert result.semantic_effect_verified is False
-
-
-def test_launcher_search_change_is_not_claimed_as_launch_success() -> None:
-    verifier = ActionVerifier(VerificationConfig(visual_change_threshold=0.001))
-    result = verifier.verify(
-        action=do(action="Launch", app="Unknown App"),
-        execution=ActionResult(
-            True,
-            False,
-            metadata={"visual_completion_required": True},
+            metadata={"package_name": "com.tencent.mm"},
         ),
         before=make_observation(10, app="System Home", package="com.android.launcher"),
-        after=make_observation(80, app="System Home", package="com.android.launcher"),
+        after=make_observation(80, app="Settings", package="com.android.settings"),
     )
-    assert result.status is VerificationStatus.PASSED
-    assert result.observable_effect_verified is True
+    assert result.status is VerificationStatus.FAILED
+    assert result.error_code == "verification_app_mismatch"
+    assert result.observable_effect_verified is False
     assert result.semantic_effect_verified is False
 
 

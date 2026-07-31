@@ -17,7 +17,6 @@ from phoneagent.adb import (
 )
 from phoneagent.adb.command import run_adb
 from phoneagent.adb.screenshot import ScreenshotCaptureError, get_screenshot
-from phoneagent.apps import AppCatalogConfig, AppDiscoveryConfig, AppLauncherConfig
 from phoneagent.config.apps import list_supported_apps
 from phoneagent.devices import AndroidDevice
 from phoneagent.model import ModelConfig
@@ -101,6 +100,12 @@ Examples:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
+        "--app-launch-timeout-seconds",
+        type=float,
+        default=float(os.getenv("PHONE_AGENT_APP_LAUNCH_TIMEOUT_SECONDS", "15")),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--disable-verification",
         action="store_true",
         help="Disable post-action verification (diagnostic only)",
@@ -135,44 +140,6 @@ Examples:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
-        "--disable-app-awareness",
-        action="store_true",
-        help="Disable dynamic installed-app discovery and model app context",
-    )
-    parser.add_argument(
-        "--app-aliases-file",
-        default=os.getenv("PHONE_AGENT_APP_ALIASES_FILE"),
-        help="Optional JSON file containing user app aliases",
-    )
-    parser.add_argument(
-        "--app-catalog-ttl",
-        type=float,
-        default=float(os.getenv("PHONE_AGENT_APP_CATALOG_TTL", "300")),
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--app-prompt-limit",
-        type=int,
-        default=int(os.getenv("PHONE_AGENT_APP_PROMPT_LIMIT", "5")),
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--max-app-context-chars",
-        type=int,
-        default=int(os.getenv("PHONE_AGENT_MAX_APP_CONTEXT_CHARS", "6000")),
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--disable-deterministic-launch",
-        action="store_true",
-        help="Route pure app-open tasks through the VLM instead of direct package launch",
-    )
-    parser.add_argument(
-        "--disable-launcher-search-fallback",
-        action="store_true",
-        help="Do not open Launcher search when no package match is found",
-    )
-    parser.add_argument(
         "--trajectory-dir",
         default=os.getenv("PHONE_AGENT_TRAJECTORY_DIR", "runs"),
     )
@@ -200,7 +167,7 @@ Examples:
     parser.add_argument(
         "--list-apps",
         action="store_true",
-        help="List launchable apps dynamically discovered on the selected device",
+        help="List configured apps that are installed on the selected device",
     )
     parser.add_argument(
         "--list-configured-apps",
@@ -212,7 +179,9 @@ Examples:
     parser.add_argument(
         "--allow-fallback-screenshot",
         action="store_true",
-        help="Diagnostic only: permit unavailable screenshots to be represented by a marked fallback",
+        help=(
+            "Diagnostic only: permit unavailable screenshots to be represented by a marked fallback"
+        ),
     )
     parser.add_argument("--quiet", "-q", action="store_true")
     return parser.parse_args()
@@ -393,18 +362,18 @@ def print_device_apps(device_id: str | None) -> int:
         return 1
     try:
         device = AndroidDevice(device_id=selected)
-        apps = device.list_launchable_apps(refresh=True)
+        apps = device.list_launchable_apps()
     except Exception as exc:
-        print(f"Failed to discover device applications: {exc}", file=sys.stderr)
+        print(f"Failed to query installed configured apps: {exc}", file=sys.stderr)
         return 1
     if not apps:
-        print("No launchable applications were discovered", file=sys.stderr)
+        print("No configured applications are installed", file=sys.stderr)
         return 1
     print(f"Device: {selected}")
-    print(f"Launchable apps: {len(apps)}")
-    print("LABEL\tPACKAGE\tACTIVITY\tLABEL_SOURCE")
+    print(f"Installed configured apps: {len(apps)}")
+    print("NAME\tPACKAGE")
     for app in apps:
-        print(f"{app.label}\t{app.package_name}\t{app.activity_name or ''}\t{app.label_source}")
+        print(f"{app.display_name}\t{app.package_name}")
     return 0
 
 
@@ -463,19 +432,7 @@ def main() -> int:
             verbose=not args.quiet,
             trajectory_dir=args.trajectory_dir,
             allow_fallback_screenshot=args.allow_fallback_screenshot,
-            app_awareness_enabled=not args.disable_app_awareness,
-            deterministic_pure_launch_enabled=not args.disable_deterministic_launch,
-            app_catalog=AppCatalogConfig(
-                ttl_seconds=args.app_catalog_ttl,
-                max_prompt_matches=args.app_prompt_limit,
-                prompt_char_budget=args.max_app_context_chars,
-            ),
-            app_discovery=AppDiscoveryConfig(
-                alias_file=args.app_aliases_file,
-            ),
-            app_launcher=AppLauncherConfig(
-                enable_launcher_search_fallback=(not args.disable_launcher_search_fallback),
-            ),
+            app_launch_timeout_seconds=args.app_launch_timeout_seconds,
             verification=VerificationConfig(
                 enabled=not args.disable_verification,
                 observation_retries=args.verification_retries,

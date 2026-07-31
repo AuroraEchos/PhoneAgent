@@ -17,14 +17,6 @@ from phoneagent.actions import (
     finish,
     parse_action,
 )
-from phoneagent.apps import (
-    AppCatalogConfig,
-    AppDiscoveryConfig,
-    AppLauncherConfig,
-    AppResolution,
-    PureLaunchIntent,
-    extract_pure_launch_intent,
-)
 from phoneagent.config import get_messages, get_system_prompt
 from phoneagent.devices import AndroidDevice, ScreenObservation
 from phoneagent.model import (
@@ -73,11 +65,7 @@ class AgentConfig:
     trajectory_dir: str = "runs"
     save_trajectory: bool = True
     allow_fallback_screenshot: bool = False
-    app_awareness_enabled: bool = True
-    deterministic_pure_launch_enabled: bool = True
-    app_catalog: AppCatalogConfig = field(default_factory=AppCatalogConfig)
-    app_discovery: AppDiscoveryConfig = field(default_factory=AppDiscoveryConfig)
-    app_launcher: AppLauncherConfig = field(default_factory=AppLauncherConfig)
+    app_launch_timeout_seconds: float = 15.0
     verification: VerificationConfig = field(default_factory=VerificationConfig)
     recovery: RecoveryConfig = field(default_factory=RecoveryConfig)
 
@@ -98,6 +86,8 @@ class AgentConfig:
             raise ValueError("observation_retries cannot be negative")
         if self.observation_retry_delay < 0:
             raise ValueError("observation_retry_delay cannot be negative")
+        if self.app_launch_timeout_seconds <= 0:
+            raise ValueError("app_launch_timeout_seconds must be positive")
 
 
 @dataclass(slots=True)
@@ -153,16 +143,8 @@ class PhoneAgent:
         self.device = device or AndroidDevice(
             device_id=self.agent_config.device_id,
             allow_fallback_screenshot=self.agent_config.allow_fallback_screenshot,
-            app_catalog_config=self.agent_config.app_catalog,
-            app_discovery_config=self.agent_config.app_discovery,
-            app_launcher_config=self.agent_config.app_launcher,
+            app_launch_timeout_seconds=self.agent_config.app_launch_timeout_seconds,
         )
-        self.app_catalog = (
-            getattr(self.device, "app_catalog", None)
-            if self.agent_config.app_awareness_enabled
-            else None
-        )
-        self._device_app_context: dict[str, Any] = {}
         self.model_client = model_client or ModelClient(self.model_config)
         self.action_handler = ActionHandler(
             device=self.device,
@@ -180,9 +162,6 @@ class PhoneAgent:
         self._context: list[dict[str, Any]] = []
         self._step_count = 0
         self._pending_observation: ScreenObservation | None = None
-        self._pure_launch_intent: PureLaunchIntent | None = None
-        self._pure_launch_resolution: AppResolution | None = None
-        self._direct_route_attempted = False
         self._strict_action_recovery: str | None = None
 
     def run(self, task: str) -> str:
@@ -261,10 +240,6 @@ class PhoneAgent:
         self._context.clear()
         self._step_count = 0
         self._pending_observation = None
-        self._device_app_context = {}
-        self._pure_launch_intent = None
-        self._pure_launch_resolution = None
-        self._direct_route_attempted = False
         self._strict_action_recovery = None
         self.state.reset()
         self.recovery_manager.reset()
@@ -312,10 +287,6 @@ class PhoneAgent:
                 action=None,
             )
 
-        deterministic_result = self._try_deterministic_pure_launch(observation)
-        if deterministic_result is not None:
-            return deterministic_result
-
         append_observation_message(
             self._context,
             observation=observation,
@@ -324,10 +295,7 @@ class PhoneAgent:
             user_prompt=user_prompt,
             is_first=is_first,
             strict_recovery=self._strict_action_recovery,
-            app_context=self._device_app_context,
             notes=self.action_handler.notes,
-            include_app_context=self.agent_config.app_awareness_enabled,
-            app_context_char_budget=self.agent_config.app_catalog.prompt_char_budget,
         )
         self._strict_action_recovery = None
         trim_context(self._context, self.agent_config.context_turns)
@@ -357,7 +325,6 @@ class PhoneAgent:
             self._strict_action_recovery = prepare_protocol_recovery(
                 self._context,
                 reason=str(exc),
-                app_context=self._device_app_context,
             )
             self._record_event(
                 EventType.MODEL_RESPONSE,
@@ -435,7 +402,6 @@ class PhoneAgent:
             self._strict_action_recovery = prepare_protocol_recovery(
                 self._context,
                 reason=message,
-                app_context=self._device_app_context,
                 rejected_action=response.action,
             )
             return self._handle_runtime_failure(
@@ -576,153 +542,6 @@ class PhoneAgent:
             message=message,
             raw_model_output=response.raw_content,
             error_code=error_code,
-            command_success=execution.success,
-            verification=final_verification.to_dict(),
-            recovery=recovery_payload,
-            phase=self.state.phase.value,
-        )
-
-    def _try_deterministic_pure_launch(
-        self,
-        observation: ScreenObservation,
-    ) -> StepResult | None:
-        """Execute a high-confidence pure app launch without calling the VLM."""
-        if (
-            not self.agent_config.deterministic_pure_launch_enabled
-            or self._direct_route_attempted
-            or self._pure_launch_intent is None
-            or self._pure_launch_resolution is None
-            or self._pure_launch_resolution.matched_app is None
-            or not callable(getattr(self.device, "launch_app_resolved", None))
-        ):
-            return None
-
-        self._direct_route_attempted = True
-        app = self._pure_launch_resolution.matched_app
-        action = do(action="Launch", app=app.package_name)
-        thinking = (
-            "Runtime deterministically resolved the pure launch task to "
-            f"{app.display_name} ({app.package_name})."
-        )
-
-        self._transition(
-            AgentPhase.PLANNING,
-            "Resolve pure application launch deterministically",
-            metadata={
-                "route": "deterministic_pure_launch",
-                "query": self._pure_launch_intent.query,
-                "package_name": app.package_name,
-                "confidence": self._pure_launch_resolution.confidence,
-            },
-        )
-        signature = self._action_signature(action)
-        self.state.update_action(action, step=self._step_count, signature=signature)
-        self._record_event(
-            EventType.ACTION,
-            "Deterministic pure-launch action",
-            {
-                "action": action,
-                "thinking": thinking,
-                "step": self._step_count,
-                "route": "deterministic_pure_launch",
-                "resolution": self._pure_launch_resolution.to_dict(),
-            },
-        )
-        if self.agent_config.verbose:
-            print("\n" + "=" * 50)
-            print("Deterministic Route:")
-            print("-" * 50)
-            print(thinking)
-            print("-" * 50)
-            print("Action:")
-            print(json.dumps(action, ensure_ascii=False, indent=2))
-            print("=" * 50 + "\n")
-
-        self._transition(AgentPhase.EXECUTING, "Execute deterministic launch action")
-        width = int(observation.screenshot.display_width or observation.screenshot.width)
-        height = int(observation.screenshot.display_height or observation.screenshot.height)
-        execution = self.action_handler.execute(action, width, height)
-        self._record_command_execution(action, execution)
-        verification = self._verify_action(action, execution, observation)
-
-        recovery_execution: _RecoveryExecution | None = None
-        final_verification = verification
-        overall_success = verification.passed
-        error_code = verification.error_code or execution.error_code
-        message = verification.message if not verification.passed else execution.message
-
-        if not verification.passed:
-            recovery_execution = self._perform_recovery(
-                action=action,
-                execution=execution,
-                verification=verification,
-            )
-            if recovery_execution.verification is not None:
-                final_verification = recovery_execution.verification
-            if recovery_execution.action_recovered:
-                overall_success = True
-                error_code = None
-                message = recovery_execution.outcome.message
-            elif recovery_execution.outcome.decision.terminal:
-                error_code = recovery_execution.outcome.error_code or error_code
-                message = recovery_execution.outcome.message
-
-        if overall_success:
-            self.recovery_manager.mark_success()
-
-        recovery_payload = (
-            recovery_execution.outcome.to_dict() if recovery_execution is not None else None
-        )
-        if final_verification.policy == "verification_disabled":
-            # Diagnostic mode accepts the launch command without claiming that
-            # the foreground application was independently verified.
-            completed = bool(execution.success and final_verification.passed)
-        else:
-            completed = bool(
-                overall_success
-                and final_verification.passed
-                and final_verification.semantic_effect_verified is True
-            )
-        if completed:
-            message = f"Opened {app.display_name} ({app.package_name})"
-
-        self.state.update_execution(
-            success=completed,
-            command_success=execution.success,
-            should_finish=completed,
-            message=message,
-            action=action,
-            error_code=None if completed else error_code,
-            metadata={
-                **execution.metadata,
-                "route": "deterministic_pure_launch",
-            },
-            verification=final_verification.to_dict(),
-            recovery=recovery_payload,
-        )
-        if recovery_payload is not None:
-            self.state.update_recovery(recovery_payload)
-
-        terminal_failure = (
-            bool(recovery_execution and recovery_execution.outcome.decision.terminal)
-            or self._failure_limit_reached()
-        )
-        if not completed and not terminal_failure and not self.state.phase.terminal:
-            self._transition(
-                AgentPhase.OBSERVING,
-                "Deterministic launch did not complete; continue with model replanning",
-            )
-        elif terminal_failure and not self.state.phase.terminal:
-            self._transition(AgentPhase.FAILED, "Deterministic launch recovery exhausted")
-
-        return StepResult(
-            success=completed,
-            finished=completed or terminal_failure,
-            action=action,
-            thinking=thinking,
-            message=message,
-            raw_model_output=None,
-            error_code=None if completed else error_code,
             command_success=execution.success,
             verification=final_verification.to_dict(),
             recovery=recovery_payload,
@@ -1176,10 +995,6 @@ class PhoneAgent:
         self._context.clear()
         self._step_count = 0
         self._pending_observation = None
-        self._device_app_context = {}
-        self._pure_launch_intent = None
-        self._pure_launch_resolution = None
-        self._direct_route_attempted = False
         self._strict_action_recovery = None
         self.state.start(task)
         self.recovery_manager.reset()
@@ -1191,67 +1006,6 @@ class PhoneAgent:
         self.last_trajectory_path = None
         self._transition(AgentPhase.INITIALIZING, "Initialize task runtime")
         self._record_event(EventType.START, "Task started", {"task": task})
-        self._initialize_app_awareness(task)
-
-    def _initialize_app_awareness(self, task: str) -> None:
-        """Refresh the device app catalog without making task startup brittle."""
-        if self.app_catalog is None:
-            return
-        try:
-            if self.agent_config.app_catalog.refresh_on_start:
-                apps = self.app_catalog.refresh()
-            else:
-                apps = self.app_catalog.ensure_loaded()
-            self._device_app_context = self.app_catalog.build_prompt_context(task)
-            self._pure_launch_intent = extract_pure_launch_intent(task)
-            if self._pure_launch_intent is not None and hasattr(self.app_catalog, "resolve"):
-                try:
-                    self._pure_launch_resolution = self.app_catalog.resolve(
-                        self._pure_launch_intent.query,
-                        refresh_if_missing=False,
-                    )
-                except Exception as exc:
-                    logger.warning("Pure-launch resolution failed: %s", exc)
-            self._record_event(
-                EventType.APP_CATALOG,
-                "Device application catalog prepared",
-                {
-                    "available": bool(apps),
-                    "app_count": len(apps),
-                    "catalog_error": self.app_catalog.last_error,
-                    "likely_goal_apps": self._device_app_context.get("likely_goal_apps", []),
-                    "pure_launch_intent": (
-                        self._pure_launch_intent.query
-                        if self._pure_launch_intent is not None
-                        else None
-                    ),
-                    "deterministic_resolution": (
-                        self._pure_launch_resolution.to_dict()
-                        if self._pure_launch_resolution is not None
-                        else None
-                    ),
-                    "step": self._step_count,
-                },
-            )
-        except Exception as exc:
-            logger.warning("App awareness initialization failed: %s", exc)
-            self._device_app_context = {
-                "catalog_available": False,
-                "catalog_error": str(exc),
-                "launch_policy": (
-                    "The device app catalog is unavailable. Use only a known exact app "
-                    "name or package; do not guess among similar applications."
-                ),
-            }
-            self._record_event(
-                EventType.APP_CATALOG,
-                "Device application catalog unavailable",
-                {
-                    "available": False,
-                    "catalog_error": str(exc),
-                    "step": self._step_count,
-                },
-            )
 
     def _finalize_run(self, result: StepResult) -> None:
         if self.state.finished:

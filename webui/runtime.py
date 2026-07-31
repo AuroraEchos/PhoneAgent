@@ -17,7 +17,6 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from phoneagent import AgentConfig, PhoneAgent
-from phoneagent.apps import AppCatalogConfig, AppDiscoveryConfig, AppLauncherConfig
 from phoneagent.cli import check_model_api, check_system_requirements
 from phoneagent.config.env import load_env
 from phoneagent.model import ModelConfig
@@ -78,14 +77,6 @@ def _build_configs(project_root: Path) -> tuple[ModelConfig, AgentConfig, Path]:
         else project_root / trajectory_setting
     ).resolve()
 
-    alias_setting = os.getenv("PHONE_AGENT_APP_ALIASES_FILE")
-    alias_file: str | None = None
-    if alias_setting:
-        alias_path = Path(alias_setting)
-        alias_file = str(
-            alias_path if alias_path.is_absolute() else (project_root / alias_path).resolve()
-        )
-
     agent_config = AgentConfig(
         max_steps=_env_int("PHONE_AGENT_MAX_STEPS", 100),
         max_runtime_seconds=_env_float("PHONE_AGENT_MAX_RUNTIME_SECONDS", 900),
@@ -96,13 +87,7 @@ def _build_configs(project_root: Path) -> tuple[ModelConfig, AgentConfig, Path]:
         max_repeated_actions=_env_int("PHONE_AGENT_MAX_REPEATED_ACTIONS", 3),
         observation_retries=_env_int("PHONE_AGENT_OBSERVATION_RETRIES", 2),
         trajectory_dir=str(trajectory_dir),
-        app_catalog=AppCatalogConfig(
-            ttl_seconds=_env_float("PHONE_AGENT_APP_CATALOG_TTL", 300),
-            max_prompt_matches=_env_int("PHONE_AGENT_APP_PROMPT_LIMIT", 5),
-            prompt_char_budget=_env_int("PHONE_AGENT_MAX_APP_CONTEXT_CHARS", 6000),
-        ),
-        app_discovery=AppDiscoveryConfig(alias_file=alias_file),
-        app_launcher=AppLauncherConfig(),
+        app_launch_timeout_seconds=_env_float("PHONE_AGENT_APP_LAUNCH_TIMEOUT_SECONDS", 15),
         verification=VerificationConfig(
             observation_retries=_env_int("PHONE_AGENT_VERIFICATION_RETRIES", 1),
             visual_change_threshold=_env_float("PHONE_AGENT_VERIFICATION_THRESHOLD", 0.002),

@@ -13,7 +13,6 @@ class EventType(str, Enum):
 
     START = "start"
     PHASE_CHANGE = "phase_change"
-    APP_CATALOG = "app_catalog"
     OBSERVATION = "observation"
     MODEL_REQUEST = "model_request"
     MODEL_RESPONSE = "model_response"

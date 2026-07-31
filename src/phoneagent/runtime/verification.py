@@ -196,10 +196,7 @@ class ActionVerifier:
         )
         screen_changed = bool(
             app_changed
-            or (
-                difference is not None
-                and difference >= self.config.visual_change_threshold
-            )
+            or (difference is not None and difference >= self.config.visual_change_threshold)
         )
         common_metadata = {
             "before_app": before.current_app,
@@ -221,39 +218,7 @@ class ActionVerifier:
         }
 
         if action_name == "Launch":
-            if execution.metadata.get("visual_completion_required") is True:
-                common_metadata["visual_completion_required"] = True
-                if screen_changed:
-                    return VerificationResult(
-                        status=VerificationStatus.PASSED,
-                        policy="launcher_search_observed",
-                        message=(
-                            "A Launcher-search state change was observed. The requested "
-                            "application has not been semantically verified as launched; "
-                            "the model must inspect and select the correct result."
-                        ),
-                        command_success=True,
-                        observable_effect_verified=True,
-                        semantic_effect_verified=False,
-                        **common,
-                    )
-                return VerificationResult(
-                    status=VerificationStatus.FAILED,
-                    policy="launcher_search_observed",
-                    message=(
-                        "Launcher search fallback reported success, but no foreground or "
-                        "visual change was observed"
-                    ),
-                    command_success=True,
-                    observable_effect_verified=False,
-                    semantic_effect_verified=False,
-                    error_code="launcher_search_not_observed",
-                    **common,
-                )
-
-            expected_app = str(
-                execution.metadata.get("package_name") or action.get("app", "")
-            )
+            expected_app = str(execution.metadata.get("package_name") or action.get("app", ""))
             actual_app = after.current_package or after.current_app
             if self._same_app(expected_app, actual_app):
                 return VerificationResult(
@@ -401,7 +366,6 @@ class ActionVerifier:
             if before.screenshot.sha256 and after.screenshot.sha256:
                 return 1.0 if before.screenshot.sha256 != after.screenshot.sha256 else 0.0
             return None
-
 
     def _crop_system_chrome(self, image: Image.Image) -> Image.Image:
         """Ignore small top/bottom bands that commonly contain clocks/navigation bars."""
