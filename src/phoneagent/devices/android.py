@@ -1,21 +1,23 @@
-"""Android device adapter backed by ADB."""
+"""Android device adapter backed by ADB.
+
+Application launching is intentionally lazy and deterministic: a model-issued
+``Launch`` action is resolved through the static app registry, checked against
+the connected device, launched through ADB, and then verified by the runtime.
+No application catalog is built when a task starts.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from phoneagent.adb import device as adb_device
 from phoneagent.adb.command import ADBCommandError, run_adb
 from phoneagent.adb.screenshot import Screenshot, ScreenshotCaptureError, get_screenshot
-from phoneagent.apps import (
-    AppCatalog,
-    AppCatalogConfig,
-    AppDiscovery,
-    AppDiscoveryConfig,
-    AppLaunchResult,
-    AppLauncherConfig,
-    LaunchAppCapability,
+from phoneagent.config.apps import (
+    get_canonical_app_name,
+    get_package_name,
+    list_canonical_app_mapping,
 )
 
 
@@ -50,6 +52,38 @@ class ScreenObservation:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class InstalledConfiguredApp:
+    """One configured app that is installed on the selected Android device."""
+
+    display_name: str
+    package_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class AppLaunchResult:
+    """Structured outcome of one lazy deterministic app launch."""
+
+    query: str
+    success: bool
+    message: str
+    package_name: str | None = None
+    display_name: str | None = None
+    error_code: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "query": self.query,
+            "success": self.success,
+            "message": self.message,
+            "package_name": self.package_name,
+            "display_name": self.display_name,
+            "error_code": self.error_code,
+            "metadata": dict(self.metadata),
+        }
+
+
 class AndroidDevice:
     """A minimal Android-only device interface."""
 
@@ -61,24 +95,16 @@ class AndroidDevice:
         screenshot_max_size: int = 1280,
         screenshot_format: str = "JPEG",
         screenshot_quality: int = 90,
-        app_catalog_config: AppCatalogConfig | None = None,
-        app_discovery_config: AppDiscoveryConfig | None = None,
-        app_launcher_config: AppLauncherConfig | None = None,
+        app_launch_timeout_seconds: float = 15.0,
     ):
+        if app_launch_timeout_seconds <= 0:
+            raise ValueError("app_launch_timeout_seconds must be positive")
         self.device_id = device_id
         self.allow_fallback_screenshot = allow_fallback_screenshot
         self.screenshot_max_size = screenshot_max_size
         self.screenshot_format = screenshot_format
         self.screenshot_quality = screenshot_quality
-        self.app_catalog = AppCatalog(
-            AppDiscovery(device_id=device_id, config=app_discovery_config),
-            config=app_catalog_config,
-        )
-        self.app_launcher = LaunchAppCapability(
-            device=self,
-            catalog=self.app_catalog,
-            config=app_launcher_config,
-        )
+        self.app_launch_timeout_seconds = float(app_launch_timeout_seconds)
 
     def ensure_ready(self) -> None:
         """Verify that ADB can address a device in the ``device`` state."""
@@ -121,10 +147,6 @@ class AndroidDevice:
         except (ADBCommandError, ValueError):
             current_app = "Unknown"
         current_package = self._package_from_current_app(current_app)
-        if current_package and current_app.startswith("Unknown ("):
-            discovered = self.app_catalog.find_by_package(current_package)
-            if discovered is not None:
-                current_app = discovered.display_name
         return ScreenObservation(
             screenshot=screenshot,
             current_app=current_app,
@@ -135,8 +157,6 @@ class AndroidDevice:
     def _package_from_current_app(current_app: str) -> str | None:
         if current_app.startswith("Unknown (") and current_app.endswith(")"):
             return current_app[len("Unknown (") : -1]
-        from phoneagent.config.apps import get_package_name
-
         return get_package_name(current_app)
 
     def tap(self, x: int, y: int) -> None:
@@ -172,18 +192,74 @@ class AndroidDevice:
         adb_device.home(self.device_id)
 
     def launch_app_resolved(self, app_name: str) -> AppLaunchResult:
-        """Resolve against the real device catalog and launch deterministically."""
-        return self.app_launcher.launch(app_name)
+        """Resolve and launch an app only when a ``Launch`` action is executed."""
+        query = str(app_name or "").strip()
+        package_name = get_package_name(query)
+        if package_name is None:
+            return AppLaunchResult(
+                query=query,
+                success=False,
+                message=f"Unknown app alias or package: {query!r}",
+                error_code="app_not_found",
+            )
+
+        display_name = get_canonical_app_name(package_name) or query or package_name
+        if not adb_device.is_package_installed(package_name, self.device_id):
+            return AppLaunchResult(
+                query=query,
+                success=False,
+                message=f"App is not installed: {display_name} ({package_name})",
+                package_name=package_name,
+                display_name=display_name,
+                error_code="app_not_installed",
+            )
+
+        try:
+            adb_device.launch_package(
+                package_name,
+                self.device_id,
+                timeout=self.app_launch_timeout_seconds,
+            )
+        except ADBCommandError as exc:
+            return AppLaunchResult(
+                query=query,
+                success=False,
+                message=f"Failed to launch {display_name} ({package_name}): {exc}",
+                package_name=package_name,
+                display_name=display_name,
+                error_code="app_launch_failed",
+                metadata={"exception_type": type(exc).__name__},
+            )
+
+        return AppLaunchResult(
+            query=query,
+            success=True,
+            message=f"Launched {display_name} ({package_name})",
+            package_name=package_name,
+            display_name=display_name,
+            metadata={"launch_mode": "monkey", "resolved_lazily": True},
+        )
 
     def launch_app(self, app_name: str) -> bool:
-        """Compatibility wrapper returning whether launch or visual fallback started."""
+        """Compatibility wrapper returning whether deterministic launch succeeded."""
         return self.launch_app_resolved(app_name).success
 
-    def list_launchable_apps(self, *, refresh: bool = False):
-        """Return launchable apps discovered on the connected device."""
-        if refresh:
-            return self.app_catalog.refresh()
-        return self.app_catalog.ensure_loaded()
+    def list_launchable_apps(self, *, refresh: bool = False) -> list[InstalledConfiguredApp]:
+        """List configured apps installed on the device.
+
+        This explicit diagnostic operation performs one package query. It is not
+        called by the agent loop and does not create a persistent app catalog.
+        ``refresh`` is accepted for backward compatibility and has no effect.
+        """
+        del refresh
+        installed = adb_device.list_installed_packages(self.device_id)
+        return [
+            InstalledConfiguredApp(display_name=name, package_name=package)
+            for package, name in sorted(
+                list_canonical_app_mapping().items(), key=lambda item: item[1].casefold()
+            )
+            if package in installed
+        ]
 
     def type_text(self, text: str) -> None:
         adb_device.type_text(text, self.device_id)

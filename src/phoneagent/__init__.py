@@ -14,10 +14,6 @@ from phoneagent._version import __version__
 __all__ = [
     "__version__",
     "AgentConfig",
-    "AppCatalogConfig",
-    "AppDiscoveryConfig",
-    "AppLauncherConfig",
-    "AppResolverConfig",
     "AgentPhase",
     "PhoneAgent",
     "RecoveryConfig",
@@ -35,25 +31,6 @@ def __getattr__(name: str) -> Any:
             "AgentConfig": AgentConfig,
             "PhoneAgent": PhoneAgent,
             "StepResult": StepResult,
-        }[name]
-    if name in {
-        "AppCatalogConfig",
-        "AppDiscoveryConfig",
-        "AppLauncherConfig",
-        "AppResolverConfig",
-    }:
-        from phoneagent.apps import (
-            AppCatalogConfig,
-            AppDiscoveryConfig,
-            AppLauncherConfig,
-            AppResolverConfig,
-        )
-
-        return {
-            "AppCatalogConfig": AppCatalogConfig,
-            "AppDiscoveryConfig": AppDiscoveryConfig,
-            "AppLauncherConfig": AppLauncherConfig,
-            "AppResolverConfig": AppResolverConfig,
         }[name]
     if name in {"AgentPhase", "RecoveryConfig", "VerificationConfig"}:
         from phoneagent.runtime import AgentPhase, RecoveryConfig, VerificationConfig

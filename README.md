@@ -30,7 +30,7 @@ Observe → Plan → Execute → Verify → Recover → Repeat
 - 基于截图的视觉理解和任务规划。
 - 只执行响应末尾唯一的 `<answer>...</answer>`；它前面的文本仅作为思考记录，
   不接受无 answer 边界的裸动作，也不猜测修复 JSON、代码块或残缺输出。
-- 支持 Android 应用发现和确定性启动。
+- 支持执行时懒解析应用别名、检查安装状态、通过 ADB 确定性启动并验证前台包名。
 - 支持动作执行后的状态验证。
 - 只使用重新规划、重新观察、安全动作重试、人工接管和终止五类有界恢复。
 - `AgentState.phase` 提供唯一实时阶段，统一 `AgentEvent` 记录完整审计历史。
@@ -201,7 +201,7 @@ uv run phoneagent --help
 uv run phoneagent --list-devices
 ```
 
-查看可启动应用：
+查看静态别名表中已配置且当前设备已安装的应用：
 
 ```bash
 uv run phoneagent --list-apps
@@ -251,26 +251,22 @@ PhoneAgent 运行时。后续连续提交任务不会重复检查。页面直接
 详细说明见 [`webui/README.md`](webui/README.md)。控制接口没有身份认证，建议保持默认的
 `127.0.0.1` 监听地址，不要直接暴露到局域网或公网。
 
-## 应用别名
+## 应用启动别名
 
-部分 Android 系统无法稳定获取应用显示名称。
-
-可以通过 alias 文件：
-
-```json
-{
-  "微信": "com.tencent.mm",
-  "淘宝": "com.taobao.taobao"
-}
-```
-
-运行：
+PhoneAgent 不会在任务开始时扫描或缓存设备应用目录。模型输出 `Launch` 后，运行时才会通过
+[`src/phoneagent/config/apps.py`](src/phoneagent/config/apps.py) 中的静态兼容表解析名称，
+或者直接接受 Android package；随后检查该包是否安装，通过 ADB 启动并验证前台包名。
 
 ```bash
-uv run phoneagent \
-  --app-aliases-file app_aliases.json \
-  "打开微信"
+# 查看所有内置名称和别名
+uv run phoneagent --list-configured-apps
+
+# 查看别名表中当前设备已安装的包
+uv run phoneagent --list-apps
 ```
+
+需要支持新的常用名称时，可以向 `APP_PACKAGES` 添加别名。未配置的已安装应用不会自动
+出现在模型上下文中；此时可以让模型使用准确 package，或者通过普通视觉 GUI 路径操作。
 
 ## Python API
 
@@ -320,7 +316,8 @@ uv run ruff check .
 PhoneAgent 当前仍然是研究原型：
 
 - 需要通过 ADB 连接 Android 设备。
-- 部分应用需要配置 alias。
+- 人类可读的 `Launch` 名称受内置静态别名表限制；未收录应用需要准确 package 或普通
+  视觉 GUI 路径。
 - 坐标点击的语义正确性仍依赖视觉模型。
 - 尚未完成 Android 原生端侧部署。
 

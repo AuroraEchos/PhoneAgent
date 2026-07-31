@@ -124,7 +124,6 @@ class RuntimeCoreTests(unittest.TestCase):
         agent = PhoneAgent(
             model_config=ModelConfig(),
             agent_config=AgentConfig(
-                app_awareness_enabled=False,
                 save_trajectory=False,
                 verbose=False,
                 max_steps=2,
@@ -142,7 +141,6 @@ class RuntimeCoreTests(unittest.TestCase):
         agent = PhoneAgent(
             model_config=ModelConfig(),
             agent_config=AgentConfig(
-                app_awareness_enabled=False,
                 save_trajectory=False,
                 verbose=False,
                 max_steps=3,

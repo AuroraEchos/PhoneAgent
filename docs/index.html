@@ -7,7 +7,7 @@
   <meta name="color-scheme" content="light">
 
   <title>PhoneAgent — Vision-Driven Android Agent Runtime</title>
-  <meta name="description" content="PhoneAgent is an open-source, vision-driven Android agent runtime with deterministic app routing, safe structured actions, post-action verification, bounded recovery, and auditable trajectories.">
+  <meta name="description" content="PhoneAgent is an open-source, vision-driven Android agent runtime with lazy package launch, safe structured actions, post-action verification, bounded recovery, and auditable trajectories.">
   <meta name="keywords" content="PhoneAgent, Android Agent, GUI Agent, ADB, Vision Language Model, VLM, mobile automation, open source">
   <meta name="author" content="Wenhao Liu">
   <link rel="canonical" href="https://auroraechos.github.io/PhoneAgent/">
@@ -39,7 +39,7 @@
         <img src="assets/logo.svg" alt="" width="34" height="34">
         <span>PhoneAgent</span>
       </a>
-      <span class="header-release" aria-label="Current release">v0.1.2</span>
+      <span class="header-release" aria-label="Current release">v0.1.3</span>
 
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" data-nav-toggle>
         <span class="sr-only">Open navigation</span>
@@ -72,7 +72,7 @@
         <div class="hero-copy reveal">
           <div class="eyebrow">
             <span class="status-dot" aria-hidden="true"></span>
-            <span data-i18n="hero.eyebrow">Open source · v0.1.2 Alpha</span>
+            <span data-i18n="hero.eyebrow">Open source · v0.1.3 Alpha</span>
           </div>
 
           <h1>
@@ -236,8 +236,8 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 7h8M8 11h5M8 15h8"/></svg>
             </div>
             <div class="feature-copy">
-              <h3 data-i18n="features.resolver.title">Deterministic app routing</h3>
-              <p data-i18n="features.resolver.description">Discover Launcher activities and resolve aliases. High-confidence pure launch tasks can bypass the VLM; multi-step tasks receive app context and continue through the visual loop.</p>
+              <h3 data-i18n="features.resolver.title">Lazy deterministic app launch</h3>
+              <p data-i18n="features.resolver.description">Resolve a model-issued Launch through built-in aliases or an explicit package, check installation on demand, start it through ADB, and verify the foreground package.</p>
             </div>
             <div class="route-line feature-detail" aria-hidden="true"><span>微信</span><i>→</i><strong>com.tencent.mm</strong></div>
           </article>
@@ -286,10 +286,10 @@
         <div class="architecture-copy reveal">
           <span class="section-kicker" data-i18n="architecture.kicker">Architecture</span>
           <h2 data-i18n="architecture.title">Deterministic where possible. Visual where necessary.</h2>
-          <p data-i18n="architecture.description">Only a high-confidence pure open-app goal takes the deterministic launch shortcut. Other tasks follow the explicit observe, plan, execute, verify, and recover loop.</p>
+          <p data-i18n="architecture.description">Every task follows the same observe, plan, execute, verify, and recover loop. Launch resolution happens only when the planner requests it, without startup catalog scans or prompt app context.</p>
 
           <div class="architecture-points">
-            <div><span>01</span><p><b data-i18n="architecture.point1.title">App-aware initialization</b><small data-i18n="architecture.point1.description">Discover Launcher activities, apply aliases, and provide likely goal apps to the planner.</small></p></div>
+            <div><span>01</span><p><b data-i18n="architecture.point1.title">Lightweight initialization</b><small data-i18n="architecture.point1.description">Initialize task state and recovery budgets without enumerating or caching installed applications.</small></p></div>
             <div><span>02</span><p><b data-i18n="architecture.point2.title">One-action loop</b><small data-i18n="architecture.point2.description">Observe a screenshot, request one model action, validate it, and dispatch it to the action handler and ADB device layer.</small></p></div>
             <div><span>03</span><p><b data-i18n="architecture.point3.title">Evidence and recovery</b><small data-i18n="architecture.point3.description">Verify the result, then continue, replan, or retry only safe actions within explicit budgets.</small></p></div>
           </div>
@@ -311,7 +311,7 @@
 
             <div class="flow-node flow-node-runtime">
               <img src="assets/logo.svg" alt="">
-              <div><b>Initialize + App Catalog</b><small>State · aliases · likely goal apps</small></div>
+              <div><b>Initialize Runtime</b><small>Task state · limits · recovery budgets</small></div>
             </div>
 
             <div class="flow-link" aria-hidden="true"></div>
@@ -321,23 +321,18 @@
               <div><b>Observe Device</b><small>Screenshot · foreground app</small></div>
             </div>
 
-            <div class="flow-shortcut">
-              <span>Pure launch</span>
-              <small>Resolved package → Action Handler · skips VLM</small>
-            </div>
-
             <div class="flow-link" aria-hidden="true"></div>
 
             <div class="flow-node flow-node-planner">
               <span class="flow-icon flow-icon-planner">V</span>
-              <div><b>Plan + Parse</b><small>General tasks · one validated VLM action</small></div>
+              <div><b>Plan + Parse</b><small>Every task · one validated VLM action</small></div>
             </div>
 
             <div class="flow-link" aria-hidden="true"></div>
 
             <div class="flow-node flow-node-executor">
               <span class="flow-icon flow-icon-executor">↯</span>
-              <div><b>Action Handler</b><small>Dispatch validated device operations</small></div>
+              <div><b>Action Handler</b><small>Dispatch operations · resolve Launch lazily</small></div>
             </div>
 
             <div class="flow-link" aria-hidden="true"></div>
@@ -465,7 +460,7 @@
             <li data-i18n="trajectory.item2">Measure latency, actions, and recovery behavior; capture tokens when the provider reports usage.</li>
             <li data-i18n="trajectory.item3">Use saved trajectories as input for evaluation and future experience-learning work.</li>
           </ul>
-          <a class="text-link" data-link="release" href="#" target="_blank" rel="noreferrer"><span data-i18n="trajectory.release">Read the v0.1.2 release notes</span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+          <a class="text-link" data-link="release" href="#" target="_blank" rel="noreferrer"><span data-i18n="trajectory.release">Read the v0.1.3 release notes</span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
         </div>
       </div>
     </section>
@@ -480,9 +475,9 @@
 
         <div class="roadmap-board reveal reveal-delay-1">
           <div class="roadmap-column complete" data-spotlight>
-            <div class="roadmap-column-head"><span></span><div><b data-i18n="roadmap.complete">Released</b><small>v0.1.2</small></div></div>
+            <div class="roadmap-column-head"><span></span><div><b data-i18n="roadmap.complete">Released</b><small>v0.1.3</small></div></div>
             <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item1.title">Vision agent loop</b><small data-i18n="roadmap.item1.description">One live AgentState and one auditable AgentEvent stream.</small></p></div>
-            <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item2.title">Android app resolver</b><small data-i18n="roadmap.item2.description">Discovery, aliases, package launch.</small></p></div>
+            <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item2.title">Lazy Android app launch</b><small data-i18n="roadmap.item2.description">Static aliases, installation checks, package launch, foreground verification.</small></p></div>
             <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item3.title">Safe action runtime</b><small data-i18n="roadmap.item3.description">Strict protocol, confirmation, minimal bounded recovery.</small></p></div>
             <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.web.title">Local Web Console</b><small data-i18n="roadmap.web.description">Session checks, live events, prompts, and trajectory inspection.</small></p></div>
           </div>
@@ -508,7 +503,7 @@
       <div class="container limitations-grid">
         <div class="limitations-heading reveal">
           <span class="section-kicker" data-i18n="limitations.kicker">Current boundaries</span>
-          <h2 data-i18n="limitations.title">Honest about what v0.1.2 can prove.</h2>
+          <h2 data-i18n="limitations.title">Honest about what v0.1.3 can prove.</h2>
           <p data-i18n="limitations.description">PhoneAgent is an Alpha research and engineering runtime. It exposes uncertainty instead of converting weak evidence into confident claims.</p>
         </div>
 
@@ -545,7 +540,7 @@
         <p data-i18n="footer.description">Vision-driven Android agent runtime.</p>
       </div>
       <div class="footer-links">
-        <div><b data-i18n="footer.project">Project</b><a data-link="github" href="#" target="_blank" rel="noreferrer">GitHub</a><a data-link="release" href="#" target="_blank" rel="noreferrer">Release v0.1.2</a><a data-link="issues" href="#" target="_blank" rel="noreferrer">Issues</a></div>
+        <div><b data-i18n="footer.project">Project</b><a data-link="github" href="#" target="_blank" rel="noreferrer">GitHub</a><a data-link="release" href="#" target="_blank" rel="noreferrer">Release v0.1.3</a><a data-link="issues" href="#" target="_blank" rel="noreferrer">Issues</a></div>
         <div><b data-i18n="footer.resources">Resources</b><a href="ARCHITECTURE.md" target="_blank" rel="noreferrer">Architecture</a><a data-link="readme" href="#" target="_blank" rel="noreferrer">README</a><a data-link="license" href="#" target="_blank" rel="noreferrer">Apache-2.0</a></div>
       </div>
     </div>

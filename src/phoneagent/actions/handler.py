@@ -452,39 +452,26 @@ class ActionHandler:
         return max(0, min(size - 1, int(scaled)))
 
     def _handle_launch(self, action: dict[str, Any], width: int, height: int) -> ActionResult:
+        del width, height
         app_name = str(action["app"])
         resolved_launch = getattr(self.device, "launch_app_resolved", None)
         if callable(resolved_launch):
             result = resolved_launch(app_name)
-            payload = result.to_dict()
             metadata = {
                 "app": app_name,
-                "app_launch": payload,
-                "package_name": result.app.package_name if result.app else None,
-                "activity_name": result.app.activity_name if result.app else None,
-                "launch_status": result.status.value,
-                "visual_completion_required": not result.fully_launched and result.success,
+                "app_launch": result.to_dict(),
+                "package_name": result.package_name,
+                "display_name": result.display_name,
             }
-            if result.success:
-                return ActionResult(
-                    True,
-                    False,
-                    message=result.message,
-                    metadata=metadata,
-                )
             return ActionResult(
-                False,
-                False,
+                success=result.success,
+                should_finish=False,
                 message=result.message,
-                error_code=(
-                    result.failure_reason.value
-                    if result.failure_reason is not None
-                    else "app_launch_failed"
-                ),
+                error_code=result.error_code,
                 metadata=metadata,
             )
 
-        # Compatibility path for test devices and third-party device adapters.
+        # Compatibility path for simple third-party device adapters.
         if self.device.launch_app(app_name):
             return ActionResult(True, False, metadata={"app": app_name})
         return ActionResult(

@@ -4,6 +4,48 @@ All notable changes to PhoneAgent will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses semantic versioning for public releases.
 
+## [0.1.3] - 2026-07-31
+
+### Added
+
+- A conversation-style Web Console with a collapsible task-history sidebar, bottom composer,
+  continuous execution timeline, responsive navigation, and saved-trajectory detail view.
+- A dedicated startup preflight gate that keeps the console blurred and unavailable until the
+  device and model checks pass.
+- Built-in static compatibility aliases for common Android applications and explicit CLI
+  commands for listing configured aliases or their installed intersection.
+- Shared `PHONE_AGENT_APP_LAUNCH_TIMEOUT_SECONDS`, Web Console host/port examples, and regression
+  coverage for the current environment contract.
+
+### Changed
+
+- Every task now enters the same observe, plan, execute, verify, and recover loop; application
+  launch no longer uses a pure-launch shortcut or startup-time application context.
+- A model-issued `Launch` is resolved lazily through a static alias or explicit package, checked
+  with PackageManager, started through ADB, and verified against the foreground package.
+- Simplified the agent orchestration, model context, action handling, verification, recovery,
+  runtime events, and Android device boundaries around the new launch contract.
+- Refined the Web Console identity footer, vertically centered composer, live waiting state,
+  sidebar behavior, and scrollbar presentation.
+- Synchronized `.env.example`, CLI/Web runtime configuration, READMEs, architecture documentation,
+  release guidance, and the bilingual project website with the implemented runtime.
+
+### Removed
+
+- The `phoneagent.apps` catalog, discovery, fuzzy resolver, intent, launcher, and app-domain model
+  package.
+- Startup application enumeration, catalog caching, prompt application injection, Launcher-search
+  fallback, custom alias files, and their obsolete environment settings.
+- Obsolete application-alias and trajectory example files that described the retired interfaces.
+
+### Safety and reliability
+
+- Unknown aliases and absent packages now return compact structured failures instead of entering
+  heuristic launcher search.
+- The Web Console continues to reuse one checked runtime per server session and exposes control
+  only after preflight succeeds.
+- Trajectory schema version remains `1.0`; the synchronized suite passes 61 tests and 17 subtests.
+
 ## [0.1.2] - 2026-07-25; corrected 2026-07-27
 
 ### Fixed in corrected release

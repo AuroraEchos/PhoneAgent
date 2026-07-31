@@ -1,6 +1,6 @@
 # PhoneAgent Architecture
 
-This document describes PhoneAgent `v0.1.2` as implemented in the repository. PhoneAgent is
+This document describes PhoneAgent `v0.1.3` as implemented in the repository. PhoneAgent is
 deliberately scoped as a Research Runtime / Evaluation Runtime for real Android devices.
 
 ## Runtime overview
@@ -9,7 +9,7 @@ deliberately scoped as a Research Runtime / Evaluation Runtime for real Android 
 CLI / Web Console
   -> environment, device and model preflight
   -> PhoneAgent.run(task)
-  -> app catalog and task initialization
+  -> lightweight task and state initialization
   -> Observe
   -> Build bounded model context
   -> Plan one strict action
@@ -50,8 +50,9 @@ payload drift between live integrations and saved trajectories.
 - Common research parameters appear in default `--help`; advanced bounds remain available as
   CLI flags or environment variables.
 
-App-context character limits belong to `AppCatalogConfig.prompt_char_budget`. There is no
-second Agent-level app-context budget or duplicate context-injection switch.
+Application launching has one advanced bound, `app_launch_timeout_seconds`, exposed through
+`PHONE_AGENT_APP_LAUNCH_TIMEOUT_SECONDS`. There is no application-catalog TTL, discovery pass,
+prompt candidate limit, or app-context injection switch.
 
 ### Android device layer
 
@@ -61,25 +62,28 @@ second Agent-level app-context budget or duplicate context-injection switch.
 - Model coordinates use the normalized `[0, 999]` space and are converted to the active device
   resolution before execution.
 
-### App catalog and deterministic routing
+### Lazy deterministic app launch
 
-The application domain has three implementation files:
+PhoneAgent does not enumerate applications when a task starts and does not bypass the planner
+for pure open-app goals. Every task enters the same observation and one-action model loop.
 
-- `phoneagent.apps.catalog` contains alias handling, discovery, resolution, task-intent
-  extraction, and the bounded catalog cache.
-- `phoneagent.apps.models` contains app-domain value objects.
-- `phoneagent.apps.launcher` contains deterministic launch behavior.
+When the model emits `do(action="Launch", app=...)`:
 
-The supported public imports remain available from `phoneagent.apps`. Direct imports from
-the former internal `aliases`, `discovery`, `intents`, or `resolver` modules are not supported.
+1. `phoneagent.config.apps` resolves a built-in human-readable alias or accepts an explicit
+   Android package name.
+2. `AndroidDevice.launch_app_resolved(...)` uses `pm path` to check that the package is installed.
+3. The ADB device layer sends a launcher intent through `monkey` under a bounded timeout.
+4. Post-action verification compares the observed foreground package with the expected package.
 
-Only a high-confidence pure open-app goal may take the deterministic launch shortcut. Other
-tasks receive compact, task-relevant app context and continue through the visual loop.
+Unknown aliases return `app_not_found`; configured but absent packages return
+`app_not_installed`. Both are structured execution failures. `--list-apps` reports only the
+intersection between configured packages and packages installed on the selected device; it is
+not a complete dynamic application catalog.
 
 ### Model context and strict action protocol
 
 `phoneagent.model.context` owns screenshot-backed prompt construction, prior-execution
-summaries, app-context serialization, context trimming, and compact strict-protocol recovery.
+summaries, context trimming, and compact strict-protocol recovery.
 `phoneagent.agent` remains responsible for orchestration rather than prompt-history mechanics.
 
 The canonical response is:
@@ -141,7 +145,7 @@ recovery branches; the model can select explicit navigation actions after a fres
 ### Trajectory
 
 `TrajectoryRecorder` writes a temporary JSON file and atomically replaces the final path.
-Trajectory schema version remains `1.0` in PhoneAgent `v0.1.2`.
+Trajectory schema version remains `1.0` in PhoneAgent `v0.1.3`.
 
 Each event contains its type, timestamp, message, payload, and optional top-level step. The
 final state snapshot is included for convenience, but the event stream is authoritative for
@@ -152,7 +156,7 @@ and evidence. They must be reviewed and redacted before publication.
 
 ## Trust boundaries
 
-PhoneAgent `v0.1.2` does not claim independent task-level correctness:
+PhoneAgent `v0.1.3` does not claim independent task-level correctness:
 
 - screen change does not prove that a coordinate target was semantically correct;
 - secure or protected surfaces may be unobservable;

@@ -13,5 +13,4 @@ recursive-include tests *.py
 include CITATION.cff
 include CODE_OF_CONDUCT.md
 include .gitattributes
-recursive-include examples *.json
 recursive-include scripts *.sh
