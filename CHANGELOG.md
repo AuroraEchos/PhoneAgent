@@ -4,6 +4,15 @@ All notable changes to PhoneAgent will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses semantic versioning for public releases.
 
+## [Unreleased]
+
+### Removed
+
+- The legacy root `main.py` source-checkout wrapper; local development now uses the installed
+  `phoneagent` CLI entry point from `pyproject.toml`.
+- The legacy `MANIFEST.in`; setuptools package discovery and package data are defined entirely in
+  `pyproject.toml`.
+
 ## [0.1.3] - 2026-07-31
 
 ### Added

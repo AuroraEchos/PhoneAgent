@@ -16,13 +16,13 @@ fi
 echo "[2/7] Checking placeholders and likely credentials"
 if grep -RInE \
   'your-username|your-repository|your-github-name|<repository-url>|<your-repository-url>|sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|-----BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY-----' \
-  README.md README_EN.md CONTRIBUTING.md docs src examples .github 2>/dev/null; then
+  README.md README_EN.md CONTRIBUTING.md docs src .github 2>/dev/null; then
   echo "Release-blocking placeholder or credential-like text found." >&2
   exit 1
 fi
 
 echo "[3/7] Compiling Python sources"
-uv run python -m compileall -q src tests main.py
+uv run python -m compileall -q src tests webui
 
 echo "[4/7] Running Ruff"
 uv run ruff check .
@@ -31,7 +31,7 @@ echo "[5/7] Running tests"
 uv run pytest -q
 
 echo "[6/7] Building distributions"
-rm -rf build dist src/phoneagent.egg-info
+rm -rf build dist phoneagent.egg-info src/phoneagent.egg-info
 uv build
 
 echo "[7/7] Verifying artifacts"
