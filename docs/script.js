@@ -138,7 +138,7 @@ const translations = {
     "hero.eyebrow": "开源项目 · v0.1.3 Alpha",
     "hero.titleLine1": "一个能够看见执行结果的",
     "hero.titleLine2": "Android Agent Runtime。",
-    "hero.description": "PhoneAgent 是一个明确收敛的研究与评测运行时，将视觉语言规划、严格结构化动作、Android 执行、证据验证和最小有界恢复整合为一条面向真实设备的可审计闭环。",
+    "hero.description": "PhoneAgent 是一个明确收敛的研究与评测 Runtime，将视觉语言规划、严格结构化动作、Android 执行、证据验证和最小有界恢复整合为一条面向真实设备的可审计闭环。",
     "hero.github": "查看 GitHub",
     "hero.start": "快速开始",
     "hero.meta.runtime": "运行环境",
