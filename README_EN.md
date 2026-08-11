@@ -22,14 +22,23 @@ failure behavior over broad workflow integrations or app-specific capabilities.
 ## Runtime properties
 
 - Screenshot-grounded planning without requiring an accessibility tree.
-- One terminal `<answer>...</answer>` is the only executable model-output region; preceding
-  text is reasoning, while unwrapped actions and malformed output are rejected.
+- One complete terminal `do(...)` or `finish(...)` call is the only executable model-output
+  region; preceding text is reasoning, while XML, multiple calls, trailing text, and malformed
+  output are rejected.
 - No heuristic repair of JSON, Markdown code fences, multiple actions, or incomplete strings.
 - AST parsing, an action allow-list, parameter validation, and explicit confirmation for
   sensitive operations.
-- Lazy deterministic app launch: a model-issued `Launch` resolves a built-in alias or explicit
-  package, checks installation, starts it through ADB, and verifies the foreground package.
+- Entry-app-first deterministic launch: after the first observation, an explicitly requested
+  entry app is launched before visual planning; later `Launch` actions use the same lazy alias,
+  installation, ADB, and foreground-package verification path.
 - Separate command, observable-effect, and deterministic semantic evidence.
+- Notification and Quick Settings semantic actions prefer `cmd statusbar`, fall back internally
+  to normalized top-edge gestures when opening has no effect, and retain both attempts in the
+  trajectory.
+- Cancellation closes the active model stream and wakes bounded waits; already-dispatched ADB
+  input remains atomic and no later action is issued.
+- Content-region fingerprints drive stagnation checks, and coordinate repetition applies only
+  to actions that actually contain coordinates.
 - Five recovery outcomes only: replan, reobserve, retry a safe action, request takeover, or
   abort.
 - `AgentState.phase` as the only live phase source and `AgentEvent` as the audit-history
@@ -70,9 +79,9 @@ cp .env.example .env
 Configure a compatible model service in `.env`:
 
 ```dotenv
-PHONE_AGENT_BASE_URL=https://open.bigmodel.cn/api/paas/v4
-PHONE_AGENT_MODEL=autoglm-phone
-PHONE_AGENT_API_KEY=YOUR_API_KEY
+BASE_URL=https://open.bigmodel.cn/api/paas/v4
+MODEL=autoglm-phone
+API_KEY=YOUR_API_KEY
 ```
 
 Zhipu BigModel is the recommended hosted service for the default `autoglm-phone` setup.
@@ -117,10 +126,13 @@ See [webui/README.md](webui/README.md) for details.
 
 ## App launch aliases
 
-PhoneAgent does not scan or cache an application catalog when a task starts. When the model
-emits `Launch`, the runtime resolves the supplied name through the built-in compatibility table
-in `src/phoneagent/config/apps.py`, or accepts an explicit Android package name. It then checks
-that package on the selected device and launches it lazily.
+PhoneAgent does not scan or cache an application catalog when a task starts. After the first
+trusted observation, the runtime conservatively recognizes explicit entry wording such as
+`open WeChat`, operation containers, and known mini-program containers. If the resolved package
+is not already foreground, `Launch` becomes the first device action before visual planning.
+Later model-issued `Launch` actions use the same built-in compatibility table in
+`src/phoneagent/config/apps.py`, installation check, ADB launch, and foreground verification.
+A failed initial launch is exposed to the model so it can choose a visible GUI path.
 
 ```bash
 # All built-in human-readable aliases

@@ -32,7 +32,7 @@ class ModelContextTests(unittest.TestCase):
         ]
         text = prepare_protocol_recovery(messages, reason="invalid")
         self.assertEqual(len(messages), 3)
-        self.assertIn("exactly one valid action", text)
+        self.assertIn("exactly one valid do(...) or finish(...) call", text)
         compact_for_protocol_recovery(messages)
         self.assertEqual(len(messages), 3)
 

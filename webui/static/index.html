@@ -86,31 +86,35 @@
                 <div><b>PhoneAgent</b><span>正在控制已连接的 Android 设备</span></div>
               </header>
 
-              <div class="live-state" id="liveState" data-active="false">
-                <span class="activity-spinner" id="activitySpinner" aria-hidden="true"></span>
-                <div>
-                  <b id="executionStatusText">等待任务</b>
-                  <span id="executionStatusDetail">提交任务后会在这里显示实时进度</span>
+              <section class="work-process" id="workProcess" data-active="false" data-status="idle">
+                <button class="work-process-toggle" id="workProcessToggle" type="button" aria-expanded="false" aria-controls="workProcessDetails">
+                  <span class="work-process-indicator" aria-hidden="true"><i></i></span>
+                  <span class="work-process-copy">
+                    <b id="processTitle">准备开始工作</b>
+                    <span id="processLatest" aria-live="polite">提交任务后会在这里显示当前进展</span>
+                    <small class="work-process-notice" id="processNotice" hidden></small>
+                  </span>
+                  <span class="work-process-meta"><span id="eventCount">0 条</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></span>
+                </button>
+                <div class="work-process-details" id="workProcessDetails" hidden>
+                  <div class="work-process-details-head"><b>完整工作过程</b><span>最新进展会显示在上方</span></div>
+                  <div class="event-feed" id="eventFeed">
+                    <div class="timeline-waiting"><i></i><span>等待 Agent 开始执行…</span></div>
+                  </div>
                 </div>
-              </div>
-
-              <div class="phase-rail" id="phaseRail" aria-label="Agent 执行阶段">
-                <span data-phase="observing"><i></i><b>观察</b></span>
-                <span data-phase="planning"><i></i><b>规划</b></span>
-                <span data-phase="executing"><i></i><b>执行</b></span>
-                <span data-phase="verifying"><i></i><b>验证</b></span>
-                <span data-phase="recovering"><i></i><b>恢复</b></span>
-              </div>
-
-              <div class="timeline-heading"><b>实时执行轨迹</b><span id="eventCount">0 条记录</span></div>
-              <div class="event-feed" id="eventFeed" aria-live="polite">
-                <div class="timeline-waiting"><i></i><span>等待 Agent 开始执行…</span></div>
-              </div>
+              </section>
 
               <div class="task-result" id="taskResultPanel" hidden>
                 <span aria-hidden="true">✓</span>
-                <div><b>任务结果</b><p id="taskResult"></p></div>
+                <div><b>最终结果</b><p id="taskResult"></p></div>
               </div>
+
+              <section class="usage-panel" id="taskUsagePanel" hidden>
+                <header><div><span>MODEL USAGE</span><h3>成本与性能</h3></div><p>按每次模型请求统计</p></header>
+                <div class="usage-summary" id="taskUsageSummary"></div>
+                <div class="usage-chart" id="taskUsageChart" role="img" aria-label="模型请求 Token、耗时和费用曲线图"></div>
+                <p class="usage-note" id="taskUsageNote"></p>
+              </section>
             </article>
           </section>
 
@@ -129,6 +133,12 @@
                 <span class="trajectory-result" id="trajectoryResult">—</span>
                 <div id="trajectoryMeta"></div>
               </div>
+              <section class="usage-panel" id="trajectoryUsagePanel" hidden>
+                <header><div><span>MODEL USAGE</span><h3>成本与性能</h3></div><p>按每次模型请求统计</p></header>
+                <div class="usage-summary" id="trajectoryUsageSummary"></div>
+                <div class="usage-chart" id="trajectoryUsageChart" role="img" aria-label="历史任务 Token、耗时和费用曲线图"></div>
+                <p class="usage-note" id="trajectoryUsageNote"></p>
+              </section>
               <div class="timeline-heading"><b>执行轨迹</b><span>历史记录</span></div>
               <div class="event-feed trajectory-event-list" id="trajectoryEvents"></div>
             </article>
@@ -142,6 +152,9 @@
             <textarea id="taskInput" maxlength="8000" rows="1" placeholder="给 PhoneAgent 一个任务…" required></textarea>
             <button class="run-button" id="runButton" type="submit" disabled aria-label="运行任务">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12 6-6 6 6M12 6v12"/></svg>
+            </button>
+            <button class="stop-button" id="stopButton" type="button" aria-label="停止当前任务" hidden>
+              <span aria-hidden="true"></span>
             </button>
           </label>
         </form>
@@ -195,6 +208,7 @@
         <button class="quiet-button" id="rejectPrompt" type="button">拒绝操作</button>
         <button class="confirm-button" id="acceptPrompt" type="button"><span>确认并继续</span></button>
       </div>
+      <button class="cancel-task-button" id="stopPromptTask" type="button">停止整个任务</button>
       <small>Agent 线程正在等待，作出选择后才会继续。</small>
     </section>
   </div>

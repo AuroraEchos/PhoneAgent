@@ -28,10 +28,13 @@ Observe → Plan → Execute → Verify → Recover → Repeat
 ## 核心能力
 
 - 基于截图的视觉理解和任务规划。
-- 只执行响应末尾唯一的 `<answer>...</answer>`；它前面的文本仅作为思考记录，
-  不接受无 answer 边界的裸动作，也不猜测修复 JSON、代码块或残缺输出。
-- 支持执行时懒解析应用别名、检查安装状态、通过 ADB 确定性启动并验证前台包名。
+- 只执行响应末尾唯一且完整的 `do(...)` 或 `finish(...)` 调用；它前面的文本仅作为
+  思考记录，不接受 XML、JSON、代码块、多个调用、尾随文本或残缺输出。
+- 明确入口应用的任务会在首次观察后优先确定性启动；其他 `Launch` 仍按需解析别名、检查安装状态并验证前台包名。
 - 支持动作执行后的状态验证。
+- 通知与控制中心使用语义动作：优先执行 `cmd statusbar`，打开无效时由执行层自动使用左上角或右上角下拉手势兜底，并将内部尝试写入轨迹。
+- 中断信号可关闭当前模型流并提前结束 Wait；已发送的原子 ADB 命令完成后不会再执行下一步。
+- 使用排除系统栏的主体区域指纹判断页面停滞，并仅对真实坐标动作进行坐标重复检测。
 - 只使用重新规划、重新观察、安全动作重试、人工接管和终止五类有界恢复。
 - `AgentState.phase` 提供唯一实时阶段，统一 `AgentEvent` 记录完整审计历史。
 - 自动保存结构化执行轨迹，便于调试、回归分析和后续评测。
@@ -174,9 +177,9 @@ https://docs.bigmodel.cn/cn/api/introduction
 配置：
 
 ```dotenv
-PHONE_AGENT_BASE_URL=https://open.bigmodel.cn/api/paas/v4
-PHONE_AGENT_MODEL=autoglm-phone
-PHONE_AGENT_API_KEY=你的API_KEY
+BASE_URL=https://open.bigmodel.cn/api/paas/v4
+MODEL=autoglm-phone
+API_KEY=你的API_KEY
 ```
 
 API Key 可以在智谱开放平台申请。
@@ -253,9 +256,12 @@ PhoneAgent 运行时。后续连续提交任务不会重复检查。页面直接
 
 ## 应用启动别名
 
-PhoneAgent 不会在任务开始时扫描或缓存设备应用目录。模型输出 `Launch` 后，运行时才会通过
-[`src/phoneagent/config/apps.py`](src/phoneagent/config/apps.py) 中的静态兼容表解析名称，
-或者直接接受 Android package；随后检查该包是否安装，通过 ADB 启动并验证前台包名。
+PhoneAgent 不会在任务开始时扫描或缓存设备应用目录。首次观察后，运行时会保守识别任务中
+“打开微信”“在支付宝里”或“微信小程序”这类明确入口，并通过
+[`src/phoneagent/config/apps.py`](src/phoneagent/config/apps.py) 的静态兼容表让 `Launch` 成为
+第一个设备动作；若目标已经在前台则不会重复启动。模型后续输出的 `Launch` 也使用同一套
+按需解析、安装检查、ADB 启动和前台包名验证流程。入口启动失败时，结构化错误会交还模型，
+允许其改用可见 GUI 路径。
 
 ```bash
 # 查看所有内置名称和别名

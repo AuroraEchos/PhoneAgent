@@ -380,8 +380,7 @@ class ADBConnection:
             return any(device.status == "device" for device in devices)
 
         return any(
-            device.device_id == device_id and device.status == "device"
-            for device in devices
+            device.device_id == device_id and device.status == "device" for device in devices
         )
 
     def enable_tcpip(

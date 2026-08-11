@@ -6,6 +6,7 @@ from phoneagent.devices.android import (
     DeviceUnavailableError,
     InstalledConfiguredApp,
     ScreenObservation,
+    SystemPanelCommandResult,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "DeviceUnavailableError",
     "InstalledConfiguredApp",
     "ScreenObservation",
+    "SystemPanelCommandResult",
 ]

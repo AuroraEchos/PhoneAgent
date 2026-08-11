@@ -30,7 +30,7 @@ DEVICE_CHECKS = (
     ("screenshot", "视觉观察"),
 )
 MODEL_CHECK = ("model", "视觉模型 API")
-BUSY_TASK_STATES = {"running", "waiting_user"}
+BUSY_TASK_STATES = {"running", "waiting_user", "cancelling"}
 
 
 def _env_int(name: str, default: int) -> int:
@@ -39,6 +39,22 @@ def _env_int(name: str, default: int) -> int:
 
 def _env_float(name: str, default: float) -> float:
     return float(os.getenv(name, str(default)))
+
+
+def _build_pricing() -> dict[str, Any]:
+    input_rate = _env_float("INPUT_PRICE_PER_1M_TOKENS", 0)
+    output_rate = _env_float("OUTPUT_PRICE_PER_1M_TOKENS", 0)
+    if not math.isfinite(input_rate) or not math.isfinite(output_rate):
+        raise ValueError("Token prices must be finite")
+    if input_rate < 0 or output_rate < 0:
+        raise ValueError("Token prices cannot be negative")
+    currency = (os.getenv("COST_CURRENCY", "CNY").strip() or "CNY")[:12]
+    return {
+        "input_per_million_tokens": input_rate,
+        "output_per_million_tokens": output_rate,
+        "currency": currency,
+        "configured": input_rate > 0 or output_rate > 0,
+    }
 
 
 def _json_safe(value: Any) -> Any:
@@ -70,7 +86,7 @@ def _build_configs(project_root: Path) -> tuple[ModelConfig, AgentConfig, Path]:
     load_env(project_root / ".env")
     model_config = ModelConfig()
 
-    trajectory_setting = Path(os.getenv("PHONE_AGENT_TRAJECTORY_DIR", "runs"))
+    trajectory_setting = Path(os.getenv("TRAJECTORY_DIR", "runs"))
     trajectory_dir = (
         trajectory_setting
         if trajectory_setting.is_absolute()
@@ -78,23 +94,23 @@ def _build_configs(project_root: Path) -> tuple[ModelConfig, AgentConfig, Path]:
     ).resolve()
 
     agent_config = AgentConfig(
-        max_steps=_env_int("PHONE_AGENT_MAX_STEPS", 100),
-        max_runtime_seconds=_env_float("PHONE_AGENT_MAX_RUNTIME_SECONDS", 900),
-        device_id=os.getenv("PHONE_AGENT_DEVICE_ID") or None,
+        max_steps=_env_int("MAX_STEPS", 100),
+        max_runtime_seconds=_env_float("MAX_RUNTIME_SECONDS", 900),
+        device_id=os.getenv("DEVICE_ID") or None,
         verbose=False,
-        context_turns=_env_int("PHONE_AGENT_CONTEXT_TURNS", 12),
-        max_consecutive_failures=_env_int("PHONE_AGENT_MAX_FAILURES", 3),
-        max_repeated_actions=_env_int("PHONE_AGENT_MAX_REPEATED_ACTIONS", 3),
-        observation_retries=_env_int("PHONE_AGENT_OBSERVATION_RETRIES", 2),
+        context_turns=_env_int("CONTEXT_TURNS", 12),
+        max_consecutive_failures=_env_int("MAX_FAILURES", 3),
+        max_repeated_actions=_env_int("MAX_REPEATED_ACTIONS", 3),
+        observation_retries=_env_int("OBSERVATION_RETRIES", 2),
         trajectory_dir=str(trajectory_dir),
-        app_launch_timeout_seconds=_env_float("PHONE_AGENT_APP_LAUNCH_TIMEOUT_SECONDS", 15),
+        app_launch_timeout_seconds=_env_float("APP_LAUNCH_TIMEOUT_SECONDS", 15),
         verification=VerificationConfig(
-            observation_retries=_env_int("PHONE_AGENT_VERIFICATION_RETRIES", 1),
-            visual_change_threshold=_env_float("PHONE_AGENT_VERIFICATION_THRESHOLD", 0.002),
+            observation_retries=_env_int("VERIFICATION_RETRIES", 1),
+            visual_change_threshold=_env_float("VERIFICATION_THRESHOLD", 0.002),
         ),
         recovery=RecoveryConfig(
-            max_total_recoveries=_env_int("PHONE_AGENT_MAX_RECOVERIES", 8),
-            max_attempts_per_failure=_env_int("PHONE_AGENT_RECOVERY_ATTEMPTS", 2),
+            max_total_recoveries=_env_int("MAX_RECOVERIES", 8),
+            max_attempts_per_failure=_env_int("RECOVERY_ATTEMPTS", 2),
         ),
     )
     return model_config, agent_config, trajectory_dir
@@ -179,7 +195,7 @@ class ConsoleRuntime:
         model_checker: Callable[[ModelConfig], bool] = check_model_api,
     ) -> None:
         self.project_root = (project_root or Path.cwd()).resolve()
-        initial_trajectory = self.project_root / os.getenv("PHONE_AGENT_TRAJECTORY_DIR", "runs")
+        initial_trajectory = self.project_root / os.getenv("TRAJECTORY_DIR", "runs")
         self.trajectories = TrajectoryStore(initial_trajectory)
         self._agent_factory = agent_factory
         self._device_checker = device_checker
@@ -210,6 +226,7 @@ class ConsoleRuntime:
         }
         self.task: dict[str, Any] = self._empty_task()
         self.pending_prompt: dict[str, Any] | None = None
+        self.pricing = _build_pricing()
 
     @staticmethod
     def _empty_task() -> dict[str, Any]:
@@ -223,6 +240,7 @@ class ConsoleRuntime:
             "recoveries": 0,
             "started_at": None,
             "finished_at": None,
+            "cancel_requested_at": None,
             "result": "",
             "error": "",
             "trajectory": None,
@@ -266,10 +284,12 @@ class ConsoleRuntime:
     def _run_checks(self) -> None:
         try:
             model_config, agent_config, trajectory_dir = _build_configs(self.project_root)
+            pricing = _build_pricing()
             self.trajectories.set_directory(trajectory_dir)
             with self._condition:
                 self.startup["model_name"] = model_config.model_name
                 self.startup["base_url"] = model_config.base_url
+                self.pricing = pricing
 
             device_output = io.StringIO()
             try:
@@ -442,6 +462,32 @@ class ConsoleRuntime:
             self._task_thread.start()
             return deepcopy(self.task)
 
+    def cancel_task(self) -> dict[str, Any]:
+        """Request cooperative cancellation of the active PhoneAgent task."""
+        with self._condition:
+            if self.task["status"] not in BUSY_TASK_STATES or self._agent is None:
+                raise ValueError("当前没有可停止的任务")
+            if self.task["status"] == "cancelling":
+                return deepcopy(self.task)
+            request_cancel = getattr(self._agent, "request_cancel", None)
+            if not callable(request_cancel):
+                raise RuntimeError("当前 Agent 不支持任务停止")
+            request_cancel("任务已由用户停止")
+            self.task["status"] = "cancelling"
+            self.task["phase"] = "cancelling"
+            self.task["cancel_requested_at"] = time.time()
+            self._append_event_locked(
+                "web_task_cancel_requested",
+                "用户请求停止当前任务",
+                {},
+                task_id=self.task["id"],
+            )
+            if self.pending_prompt is not None:
+                self._prompt_response = False
+                self._prompt_answered = True
+            self._condition.notify_all()
+            return deepcopy(self.task)
+
     def _run_task(self, task_id: str, goal: str) -> None:
         agent = self._agent
         if agent is None:
@@ -450,6 +496,7 @@ class ConsoleRuntime:
             result = agent.run(goal)
             state = agent.state.to_dict()
             success = state.get("success") is True
+            cancelled = state.get("phase") == "cancelled"
             trajectory = (
                 Path(agent.last_trajectory_path).name if agent.last_trajectory_path else None
             )
@@ -458,7 +505,7 @@ class ConsoleRuntime:
                     return
                 self.task.update(
                     {
-                        "status": "success" if success else "failed",
+                        "status": "cancelled" if cancelled else ("success" if success else "failed"),
                         "phase": state.get("phase", "completed" if success else "failed"),
                         "current_step": state.get("current_step", 0),
                         "current_app": state.get("current_app", ""),
@@ -471,7 +518,7 @@ class ConsoleRuntime:
                 self._append_event_locked(
                     "web_task_finished",
                     result,
-                    {"success": success, "trajectory": trajectory},
+                    {"success": success, "cancelled": cancelled, "trajectory": trajectory},
                     task_id=task_id,
                 )
         except Exception as exc:
@@ -575,13 +622,18 @@ class ConsoleRuntime:
             while not self._prompt_answered and not self._closing:
                 self._condition.wait()
             answer = bool(self._prompt_response)
+            cancelling = self.task["status"] == "cancelling"
             self.pending_prompt = None
             if self.task["status"] == "waiting_user":
                 self.task["status"] = "running"
             self._append_event_locked(
                 "user_response",
-                "用户已确认继续" if answer else "用户拒绝了敏感操作",
-                {"prompt_type": prompt_type, "accepted": answer},
+                (
+                    "用户请求停止任务"
+                    if cancelling
+                    else ("用户已确认继续" if answer else "用户拒绝了敏感操作")
+                ),
+                {"prompt_type": prompt_type, "accepted": answer, "cancelled": cancelling},
                 task_id=self.task["id"],
             )
             return answer
@@ -608,6 +660,7 @@ class ConsoleRuntime:
                     "startup": deepcopy(self.startup),
                     "task": deepcopy(self.task),
                     "pending_prompt": deepcopy(self.pending_prompt),
+                    "pricing": deepcopy(self.pricing),
                     "trajectory_dir": str(self.trajectories.directory),
                 }
             )
@@ -650,6 +703,10 @@ class ConsoleRuntime:
     def close(self) -> None:
         with self._condition:
             self._closing = True
+            if self._agent is not None and self.task["status"] in BUSY_TASK_STATES:
+                request_cancel = getattr(self._agent, "request_cancel", None)
+                if callable(request_cancel):
+                    request_cancel("Web Console 已停止")
             if self.pending_prompt is not None:
                 self._prompt_response = False
                 self._prompt_answered = True

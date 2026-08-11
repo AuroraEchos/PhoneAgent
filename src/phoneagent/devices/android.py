@@ -19,6 +19,7 @@ from phoneagent.config.apps import (
     get_package_name,
     list_canonical_app_mapping,
 )
+from phoneagent.config.timing import TimingConfig, get_timing_config
 
 
 class DeviceUnavailableError(RuntimeError):
@@ -32,6 +33,8 @@ class ScreenObservation:
     screenshot: Screenshot
     current_app: str
     current_package: str | None = None
+    system_panel_visible: bool | None = None
+    system_panel_name: str | None = None
 
     def to_screen_info(self) -> dict[str, Any]:
         """Return compact JSON-serializable metadata for the model prompt."""
@@ -49,6 +52,8 @@ class ScreenObservation:
             "is_blank_screen": self.screenshot.is_blank,
             "screenshot_sha256": self.screenshot.sha256,
             "observation_error": self.screenshot.error,
+            "system_panel_visible": self.system_panel_visible,
+            "system_panel_name": self.system_panel_name,
         }
 
 
@@ -84,6 +89,30 @@ class AppLaunchResult:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class SystemPanelCommandResult:
+    """Structured outcome of one deterministic ``cmd statusbar`` request."""
+
+    target: str
+    command: str
+    success: bool
+    returncode: int
+    message: str
+    stdout: str = ""
+    stderr: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "target": self.target,
+            "transport": "cmd_statusbar",
+            "command": self.command,
+            "success": self.success,
+            "returncode": self.returncode,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+        }
+
+
 class AndroidDevice:
     """A minimal Android-only device interface."""
 
@@ -93,9 +122,10 @@ class AndroidDevice:
         *,
         allow_fallback_screenshot: bool = False,
         screenshot_max_size: int = 1280,
-        screenshot_format: str = "JPEG",
+        screenshot_format: str = "PNG",
         screenshot_quality: int = 90,
         app_launch_timeout_seconds: float = 15.0,
+        timing: TimingConfig | None = None,
     ):
         if app_launch_timeout_seconds <= 0:
             raise ValueError("app_launch_timeout_seconds must be positive")
@@ -105,6 +135,7 @@ class AndroidDevice:
         self.screenshot_format = screenshot_format
         self.screenshot_quality = screenshot_quality
         self.app_launch_timeout_seconds = float(app_launch_timeout_seconds)
+        self.timing = timing or get_timing_config()
 
     def ensure_ready(self) -> None:
         """Verify that ADB can address a device in the ``device`` state."""
@@ -142,8 +173,10 @@ class AndroidDevice:
         if not screenshot.available and not self.allow_fallback_screenshot:
             raise ScreenshotCaptureError(screenshot.error or "Screenshot unavailable")
 
+        panel_visible: bool | None = None
+        panel_name: str | None = None
         try:
-            current_app = adb_device.get_current_app(self.device_id)
+            current_app, panel_visible, panel_name = adb_device.get_window_state(self.device_id)
         except (ADBCommandError, ValueError):
             current_app = "Unknown"
         current_package = self._package_from_current_app(current_app)
@@ -151,6 +184,8 @@ class AndroidDevice:
             screenshot=screenshot,
             current_app=current_app,
             current_package=current_package,
+            system_panel_visible=panel_visible,
+            system_panel_name=panel_name,
         )
 
     @staticmethod
@@ -160,13 +195,21 @@ class AndroidDevice:
         return get_package_name(current_app)
 
     def tap(self, x: int, y: int) -> None:
-        adb_device.tap(x, y, self.device_id)
+        adb_device.tap(x, y, self.device_id, delay=self.timing.device.default_tap_delay)
 
     def double_tap(self, x: int, y: int) -> None:
-        adb_device.double_tap(x, y, self.device_id)
+        adb_device.double_tap(
+            x, y, self.device_id, delay=self.timing.device.default_double_tap_delay
+        )
 
     def long_press(self, x: int, y: int, duration_ms: int = 800) -> None:
-        adb_device.long_press(x, y, duration_ms=duration_ms, device_id=self.device_id)
+        adb_device.long_press(
+            x,
+            y,
+            duration_ms=duration_ms,
+            device_id=self.device_id,
+            delay=self.timing.device.default_long_press_delay,
+        )
 
     def swipe(
         self,
@@ -183,13 +226,87 @@ class AndroidDevice:
             end_y,
             duration_ms=duration_ms,
             device_id=self.device_id,
+            delay=self.timing.device.default_swipe_delay,
         )
 
     def back(self) -> None:
-        adb_device.back(self.device_id)
+        adb_device.back(self.device_id, delay=self.timing.device.default_back_delay)
 
     def home(self) -> None:
-        adb_device.home(self.device_id)
+        adb_device.home(self.device_id, delay=self.timing.device.default_home_delay)
+
+    def open_notifications(self) -> SystemPanelCommandResult:
+        return self._run_system_panel_command("notifications", "expand-notifications")
+
+    def open_quick_settings(self) -> SystemPanelCommandResult:
+        return self._run_system_panel_command("quick_settings", "expand-settings")
+
+    def close_system_panel(self) -> SystemPanelCommandResult:
+        return self._run_system_panel_command("closed", "collapse")
+
+    def open_system_panel_gesture(
+        self,
+        action_name: str,
+        screen_width: int,
+        screen_height: int,
+    ) -> dict[str, Any]:
+        """Use an OEM-compatible edge gesture for an open-panel fallback."""
+        if action_name not in {"OpenNotifications", "OpenQuickSettings"}:
+            raise ValueError(f"No system-panel gesture fallback for {action_name!r}")
+        if screen_width <= 0 or screen_height <= 0:
+            raise ValueError(f"Invalid display size: {screen_width}x{screen_height}")
+
+        x_ratio = 0.1 if action_name == "OpenNotifications" else 0.9
+        start_x = round((screen_width - 1) * x_ratio)
+        start_y = max(1, round((screen_height - 1) * 0.03))
+        end_y = max(start_y + 1, round((screen_height - 1) * 0.82))
+        duration_ms = 650
+        adb_device.swipe(
+            start_x,
+            start_y,
+            start_x,
+            end_y,
+            duration_ms=duration_ms,
+            device_id=self.device_id,
+            delay=self.timing.device.default_swipe_delay,
+        )
+        return {
+            "target": (
+                "notifications" if action_name == "OpenNotifications" else "quick_settings"
+            ),
+            "transport": "gesture",
+            "fallback_used": True,
+            "edge": "top_left" if action_name == "OpenNotifications" else "top_right",
+            "start": [start_x, start_y],
+            "end": [start_x, end_y],
+            "duration_ms": duration_ms,
+        }
+
+    def _run_system_panel_command(
+        self,
+        target: str,
+        command: str,
+    ) -> SystemPanelCommandResult:
+        result = adb_device.statusbar_command(command, self.device_id)
+        stdout = str(result.stdout or "").strip()
+        stderr = str(result.stderr or "").strip()
+        output = f"{stdout}\n{stderr}".casefold()
+        failure_markers = ("permission denial", "permission denied", "unknown command", "error:")
+        success = result.returncode == 0 and not any(marker in output for marker in failure_markers)
+        message = (
+            f"Requested system panel state {target} using cmd statusbar {command}"
+            if success
+            else f"cmd statusbar {command} failed with exit code {result.returncode}"
+        )
+        return SystemPanelCommandResult(
+            target=target,
+            command=command,
+            success=success,
+            returncode=int(result.returncode),
+            message=message,
+            stdout=stdout[:500],
+            stderr=stderr[:500],
+        )
 
     def launch_app_resolved(self, app_name: str) -> AppLaunchResult:
         """Resolve and launch an app only when a ``Launch`` action is executed."""

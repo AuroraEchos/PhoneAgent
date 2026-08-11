@@ -17,6 +17,15 @@ DEFAULT_ACTION_TIMEOUT = 5
 DEFAULT_QUERY_TIMEOUT = 10
 DEFAULT_LAUNCH_TIMEOUT = 15
 
+_SYSTEM_PANEL_WINDOW_MARKERS = (
+    "notificationshade",
+    "quicksettings",
+    "quick settings",
+    "controlcenter",
+    "control center",
+    "supercard",
+)
+
 
 def _validate_coordinate(x: int, y: int) -> None:
     """Validate screen coordinates."""
@@ -78,9 +87,96 @@ def _extract_focused_package(output: str) -> str | None:
     return None
 
 
+def _extract_system_panel_state(output: str) -> tuple[bool | None, str | None]:
+    """Extract whether a notification/quick-settings overlay is visible.
+
+    WindowManager keeps many panel windows registered even while they are
+    collapsed, so merely finding ``NotificationShade`` is not sufficient.  A
+    focused panel is definitive; otherwise inspect the matching window block
+    for a visible or shown surface.  Unknown OEM layouts return ``None`` rather
+    than pretending that the panel is closed.
+    """
+    if not output.strip():
+        return None, None
+
+    for line in output.splitlines():
+        folded = line.casefold()
+        if "mcurrentfocus=" not in folded:
+            continue
+        marker = next(
+            (value for value in _SYSTEM_PANEL_WINDOW_MARKERS if value in folded),
+            None,
+        )
+        if marker is not None and "null" not in folded:
+            return True, marker
+
+    block_start = re.compile(r"(?m)^\s*Window #\d+ Window\{")
+    starts = list(block_start.finditer(output))
+    matching_names: list[str] = []
+    for index, match in enumerate(starts):
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(output)
+        block = output[match.start() : end]
+        folded = block.casefold()
+        marker = next(
+            (value for value in _SYSTEM_PANEL_WINDOW_MARKERS if value in folded),
+            None,
+        )
+        if marker is None:
+            continue
+        matching_names.append(marker)
+        if "isvisible=true" in folded or "surface: shown=true" in folded:
+            return True, marker
+
+    if matching_names:
+        return False, matching_names[0]
+    return None, None
+
+
 def _package_to_app_name(package: str) -> str | None:
     """Map a package name back to its canonical configured app name."""
     return get_canonical_app_name(package)
+
+
+def get_window_state(
+    device_id: str | None = None,
+) -> tuple[str, bool | None, str | None]:
+    """Return the focused app and non-sensitive system-panel visibility state."""
+    result = run_adb(
+        ["shell", "dumpsys", "window"],
+        device_id=device_id,
+        timeout=DEFAULT_QUERY_TIMEOUT,
+        retries=1,
+    )
+
+    output = result.stdout
+    if not output:
+        raise ValueError("No output from dumpsys window")
+
+    package = _extract_focused_package(output)
+    panel_visible, panel_name = _extract_system_panel_state(output)
+    if not package:
+        return "Unknown", panel_visible, panel_name
+
+    app_name = _package_to_app_name(package)
+    if app_name:
+        return app_name, panel_visible, panel_name
+
+    home_packages = {
+        "com.android.launcher",
+        "com.android.launcher2",
+        "com.android.launcher3",
+        "com.google.android.apps.nexuslauncher",
+        "com.miui.home",
+        "com.huawei.android.launcher",
+        "com.oppo.launcher",
+        "com.vivo.launcher",
+        "com.sec.android.app.launcher",
+    }
+
+    if package in home_packages or "launcher" in package.lower():
+        return "System Home", panel_visible, panel_name
+
+    return f"Unknown ({package})", panel_visible, panel_name
 
 
 def get_current_app(device_id: str | None = None) -> str:
@@ -96,41 +192,21 @@ def get_current_app(device_id: str | None = None) -> str:
         "Unknown (<package>)" for unknown third-party/system apps.
         "Unknown" if the focused package cannot be parsed.
     """
-    result = run_adb(
-        ["shell", "dumpsys", "window"],
+    current_app, _panel_visible, _panel_name = get_window_state(device_id)
+    return current_app
+
+
+def statusbar_command(command: str, device_id: str | None = None):
+    """Run one allowlisted ``cmd statusbar`` panel command without retries."""
+    allowed = {"expand-notifications", "expand-settings", "collapse"}
+    if command not in allowed:
+        raise ValueError(f"Unsupported statusbar command: {command!r}")
+    return run_adb(
+        ["shell", "cmd", "statusbar", command],
         device_id=device_id,
-        timeout=DEFAULT_QUERY_TIMEOUT,
-        retries=1,
+        timeout=DEFAULT_ACTION_TIMEOUT,
+        check=False,
     )
-
-    output = result.stdout
-    if not output:
-        raise ValueError("No output from dumpsys window")
-
-    package = _extract_focused_package(output)
-    if not package:
-        return "Unknown"
-
-    app_name = _package_to_app_name(package)
-    if app_name:
-        return app_name
-
-    home_packages = {
-        "com.android.launcher",
-        "com.android.launcher2",
-        "com.android.launcher3",
-        "com.google.android.apps.nexuslauncher",
-        "com.miui.home",
-        "com.huawei.android.launcher",
-        "com.oppo.launcher",
-        "com.vivo.launcher",
-        "com.sec.android.app.launcher",
-    }
-
-    if package in home_packages or "launcher" in package.lower():
-        return "System Home"
-
-    return f"Unknown ({package})"
 
 
 def get_screen_size(device_id: str | None = None) -> tuple[int, int]:

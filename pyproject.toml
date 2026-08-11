@@ -20,8 +20,6 @@ keywords = [
     "gui-agent",
     "vision-language-model",
     "automation",
-    "evaluation",
-    "research",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",

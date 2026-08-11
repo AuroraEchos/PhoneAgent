@@ -4,9 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import shutil
 import sys
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Optional, Tuple, Union
 
 from phoneagent import __version__, AgentConfig, PhoneAgent
 from phoneagent.adb import (
@@ -15,21 +20,123 @@ from phoneagent.adb import (
     get_current_input_method,
     is_adb_keyboard_installed,
 )
-from phoneagent.adb.command import run_adb
+from phoneagent.adb.command import ADBCommandError, run_adb
 from phoneagent.adb.screenshot import ScreenshotCaptureError, get_screenshot
 from phoneagent.config.apps import list_supported_apps
 from phoneagent.devices import AndroidDevice
 from phoneagent.model import ModelConfig
 from phoneagent.runtime import RecoveryConfig, VerificationConfig
 
+# ============================================================================
+# Logging Setup
+# ============================================================================
 
-def parse_args() -> argparse.Namespace:
+logger = logging.getLogger(__name__)
+
+# Configure root logger for CLI
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+
+
+# ============================================================================
+# Constants
+# ============================================================================
+
+DEFAULT_MAX_STEPS = 100
+DEFAULT_MAX_RUNTIME_SECONDS = 900
+DEFAULT_MAX_TOKENS = 2048
+DEFAULT_MAX_CONSECUTIVE_FAILURES = 3
+DEFAULT_MAX_REPEATED_ACTIONS = 3
+DEFAULT_CONTEXT_TURNS = 12
+DEFAULT_MODEL_RETRIES = 2
+DEFAULT_OBSERVATION_RETRIES = 2
+DEFAULT_APP_LAUNCH_TIMEOUT_SECONDS = 15
+DEFAULT_VERIFICATION_RETRIES = 1
+DEFAULT_VERIFICATION_THRESHOLD = 0.002
+DEFAULT_MAX_RECOVERIES = 8
+DEFAULT_RECOVERY_ATTEMPTS_PER_FAILURE = 2
+DEFAULT_TRAJECTORY_DIR = "runs"
+DEFAULT_TCPIP_PORT = 5555
+
+EXIT_SUCCESS = 0
+EXIT_FAILURE = 1
+EXIT_CONFIG_ERROR = 2
+EXIT_TASK_FAILURE = 3
+
+
+# ============================================================================
+# Enums and Data Classes
+# ============================================================================
+
+class ExitCode(Enum):
+    """Standard exit codes for the CLI."""
+    SUCCESS = EXIT_SUCCESS
+    FAILURE = EXIT_FAILURE
+    CONFIG_ERROR = EXIT_CONFIG_ERROR
+    TASK_FAILURE = EXIT_TASK_FAILURE
+
+
+@dataclass
+class CLIConfig:
+    """Aggregated configuration from CLI arguments."""
+    model: ModelConfig
+    agent: AgentConfig
+    device_id: Optional[str]
+    task: Optional[str]
+    skip_system_check: bool
+    skip_model_check: bool
+    quiet: bool
+
+
+# ============================================================================
+# Main CLI Entry Point
+# ============================================================================
+
+def main() -> int:
+    """Main entry point for PhoneAgent CLI."""
+    try:
+        args = parse_args()
+
+        # Handle command-only operations
+        if args.list_configured_apps:
+            _print_configured_apps()
+            return ExitCode.SUCCESS.value
+
+        if args.list_apps:
+            return _list_device_apps(args.device_id)
+
+        # Handle device management commands
+        result = _handle_device_commands(args)
+        if result is not None:
+            return result
+
+        # Main agent execution
+        cli_config = _build_cli_config(args)
+        return _run_agent(cli_config)
+
+    except KeyboardInterrupt:
+        print("\nInterrupted by user.")
+        return ExitCode.FAILURE.value
+    except Exception as exc:
+        logger.exception("Unexpected error")
+        print(f"\n[ERROR] Unexpected error: {exc}", file=sys.stderr)
+        return ExitCode.FAILURE.value
+
+
+# ============================================================================
+# Argument Parsing
+# ============================================================================
+
+def _parse_arguments() -> argparse.Namespace:
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         description="PhoneAgent - Android vision-language phone automation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  phoneagent "打开设置并查看 Wi-Fi 页面"
+  phoneagent "打开美团下单一杯咖啡"
   phoneagent --device-id emulator-5554 "打开浏览器搜索 LangGraph"
   phoneagent --connect 192.168.1.100:5555
   phoneagent --enable-tcpip 5555
@@ -37,381 +144,218 @@ Examples:
   phoneagent --list-apps --device-id emulator-5554
         """,
     )
-    parser.add_argument("task", nargs="?", help="Task; omit for interactive mode")
-    parser.add_argument("--version", action="version", version=f"PhoneAgent {__version__}")
+
+    # Main argument
     parser.add_argument(
+        "task",
+        nargs="?",
+        help="Task to execute; omit for interactive mode"
+    )
+
+    # Version
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"PhoneAgent {__version__}"
+    )
+
+    # Model configuration
+    model_group = parser.add_argument_group("Model Configuration")
+    model_group.add_argument(
         "--base-url",
-        default=os.getenv("PHONE_AGENT_BASE_URL", "http://localhost:8000/v1"),
-        help="OpenAI-compatible API base URL",
+        default=os.getenv("BASE_URL"),
+        help="OpenAI-compatible API base URL (required)"
     )
-    parser.add_argument(
+    model_group.add_argument(
         "--model",
-        default=os.getenv("PHONE_AGENT_MODEL", "autoglm-phone-9b"),
-        help="Model name",
+        default=os.getenv("MODEL"),
+        help="Model name (required)"
     )
-    parser.add_argument(
+    model_group.add_argument(
         "--apikey",
-        default=os.getenv("PHONE_AGENT_API_KEY", "EMPTY"),
-        help="Model API key",
+        default=os.getenv("API_KEY"),
+        help="Model API key (required)"
     )
-    parser.add_argument(
-        "--max-steps",
-        type=int,
-        default=int(os.getenv("PHONE_AGENT_MAX_STEPS", "100")),
-    )
-    parser.add_argument(
-        "--max-runtime-seconds",
-        type=float,
-        default=float(os.getenv("PHONE_AGENT_MAX_RUNTIME_SECONDS", "900")),
-    )
-    parser.add_argument(
+    model_group.add_argument(
         "--max-tokens",
         type=int,
-        default=int(os.getenv("PHONE_AGENT_MAX_TOKENS", "3000")),
+        default=int(os.getenv("MAX_TOKENS", str(DEFAULT_MAX_TOKENS))),
+        help=f"Maximum tokens for model responses (default: {DEFAULT_MAX_TOKENS})"
     )
-    parser.add_argument(
-        "--max-consecutive-failures",
-        type=int,
-        default=int(os.getenv("PHONE_AGENT_MAX_FAILURES", "3")),
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--max-repeated-actions",
-        type=int,
-        default=int(os.getenv("PHONE_AGENT_MAX_REPEATED_ACTIONS", "3")),
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--context-turns",
-        type=int,
-        default=int(os.getenv("PHONE_AGENT_CONTEXT_TURNS", "12")),
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
+    model_group.add_argument(
         "--model-retries",
         type=int,
-        default=int(os.getenv("PHONE_AGENT_MODEL_RETRIES", "2")),
-        help=argparse.SUPPRESS,
+        default=int(os.getenv("MODEL_RETRIES", str(DEFAULT_MODEL_RETRIES))),
+        help=argparse.SUPPRESS
     )
-    parser.add_argument(
-        "--observation-retries",
+
+    # Agent configuration
+    agent_group = parser.add_argument_group("Agent Configuration")
+    agent_group.add_argument(
+        "--max-steps",
         type=int,
-        default=int(os.getenv("PHONE_AGENT_OBSERVATION_RETRIES", "2")),
-        help=argparse.SUPPRESS,
+        default=int(os.getenv("MAX_STEPS", str(DEFAULT_MAX_STEPS))),
+        help=f"Maximum execution steps (default: {DEFAULT_MAX_STEPS})"
     )
-    parser.add_argument(
+    agent_group.add_argument(
+        "--max-runtime-seconds",
+        type=float,
+        default=float(os.getenv("MAX_RUNTIME_SECONDS", str(DEFAULT_MAX_RUNTIME_SECONDS))),
+        help=f"Maximum runtime in seconds (default: {DEFAULT_MAX_RUNTIME_SECONDS})"
+    )
+    agent_group.add_argument(
         "--app-launch-timeout-seconds",
         type=float,
-        default=float(os.getenv("PHONE_AGENT_APP_LAUNCH_TIMEOUT_SECONDS", "15")),
-        help=argparse.SUPPRESS,
+        default=float(os.getenv("APP_LAUNCH_TIMEOUT_SECONDS", str(DEFAULT_APP_LAUNCH_TIMEOUT_SECONDS))),
+        help=argparse.SUPPRESS
     )
-    parser.add_argument(
-        "--disable-verification",
-        action="store_true",
-        help="Disable post-action verification (diagnostic only)",
-    )
-    parser.add_argument(
-        "--verification-retries",
-        type=int,
-        default=int(os.getenv("PHONE_AGENT_VERIFICATION_RETRIES", "1")),
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--verification-threshold",
-        type=float,
-        default=float(os.getenv("PHONE_AGENT_VERIFICATION_THRESHOLD", "0.002")),
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--disable-recovery",
-        action="store_true",
-        help="Disable automatic recovery and abort on the first recoverable failure",
-    )
-    parser.add_argument(
-        "--max-recoveries",
-        type=int,
-        default=int(os.getenv("PHONE_AGENT_MAX_RECOVERIES", "8")),
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--recovery-attempts-per-failure",
-        type=int,
-        default=int(os.getenv("PHONE_AGENT_RECOVERY_ATTEMPTS", "2")),
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--trajectory-dir",
-        default=os.getenv("PHONE_AGENT_TRAJECTORY_DIR", "runs"),
-    )
-    parser.add_argument(
+
+    # Device configuration
+    device_group = parser.add_argument_group("Device Management")
+    device_group.add_argument(
         "--device-id",
-        "-d",
-        default=os.getenv("PHONE_AGENT_DEVICE_ID"),
-        help="ADB device id for multi-device setups",
+        default=os.getenv("DEVICE_ID"),
+        help="ADB device ID for multi-device setups"
     )
-    parser.add_argument("--connect", "-c", metavar="ADDRESS")
-    parser.add_argument(
+    device_group.add_argument(
+        "--connect", "-c",
+        metavar="ADDRESS",
+        help="Connect to remote device"
+    )
+    device_group.add_argument(
         "--disconnect",
         nargs="?",
         const="all",
         metavar="ADDRESS",
+        help="Disconnect from remote device"
     )
-    parser.add_argument(
+    device_group.add_argument(
         "--enable-tcpip",
         type=int,
         nargs="?",
-        const=5555,
+        const=DEFAULT_TCPIP_PORT,
         metavar="PORT",
+        help="Enable TCP/IP debugging"
     )
-    parser.add_argument("--list-devices", action="store_true")
-    parser.add_argument(
+    device_group.add_argument(
+        "--list-devices",
+        action="store_true",
+        help="List connected ADB devices"
+    )
+    device_group.add_argument(
         "--list-apps",
         action="store_true",
-        help="List configured apps that are installed on the selected device",
+        help="List configured apps installed on the selected device"
     )
-    parser.add_argument(
+    device_group.add_argument(
         "--list-configured-apps",
         action="store_true",
-        help="List built-in compatibility aliases without querying a device",
+        help="List built-in compatibility aliases without querying a device"
     )
-    parser.add_argument("--skip-system-check", action="store_true")
-    parser.add_argument("--skip-model-check", action="store_true")
-    parser.add_argument(
+
+    # Verification and recovery
+    verification_group = parser.add_argument_group("Verification & Recovery")
+    verification_group.add_argument(
+        "--disable-verification",
+        action="store_true",
+        help="Disable post-action verification (diagnostic only)"
+    )
+    verification_group.add_argument(
+        "--disable-recovery",
+        action="store_true",
+        help="Disable automatic recovery and abort on first recoverable failure"
+    )
+
+    # Hidden/advanced options
+    _add_hidden_options(parser)
+
+    # Output and behavior
+    behavior_group = parser.add_argument_group("Behavior")
+    behavior_group.add_argument(
+        "--trajectory-dir",
+        default=os.getenv("TRAJECTORY_DIR", DEFAULT_TRAJECTORY_DIR),
+        help=f"Directory for trajectory logs (default: {DEFAULT_TRAJECTORY_DIR})"
+    )
+    behavior_group.add_argument(
+        "--skip-system-check",
+        action="store_true",
+        help="Skip ADB and device verification"
+    )
+    behavior_group.add_argument(
+        "--skip-model-check",
+        action="store_true",
+        help="Skip model API verification"
+    )
+    behavior_group.add_argument(
         "--allow-fallback-screenshot",
         action="store_true",
-        help=(
-            "Diagnostic only: permit unavailable screenshots to be represented by a marked fallback"
-        ),
+        help="Diagnostic only: permit unavailable screenshots to be represented by a marked fallback"
     )
-    parser.add_argument("--quiet", "-q", action="store_true")
+    behavior_group.add_argument(
+        "--quiet", "-q",
+        action="store_true",
+        help="Suppress verbose output"
+    )
+
     return parser.parse_args()
 
 
-def check_system_requirements(device_id: str | None = None) -> tuple[bool, str | None]:
-    print("\n" + "=" * 64)
-    print("Android / ADB Environment Check")
-    print("=" * 64)
+# Keep the argument parser importable for integrations and tests.  The Web UI
+# and earlier releases exposed the CLI helpers as public functions, so the
+# refactor to private implementation names must not remove that API surface.
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for programmatic CLI callers."""
+    return _parse_arguments()
 
-    adb_path = shutil.which("adb")
-    print("\n[1/4] ADB executable")
-    if adb_path is None:
-        print("  [FAILED] adb was not found in PATH")
-        print("  Ubuntu: sudo apt install android-tools-adb")
-        return False, None
-    try:
-        result = run_adb(["version"], adb_path=adb_path, timeout=10)
-        first_line = (result.stdout or "").splitlines()[0]
-        print(f"  [OK] {first_line}")
-        print(f"  Path: {adb_path}")
-    except Exception as exc:
-        print(f"  [FAILED] {exc}")
-        return False, None
 
-    print("\n[2/4] Connected device")
-    conn = ADBConnection(adb_path=adb_path)
-    devices = conn.list_devices()
-    ready = [device for device in devices if device.status == "device"]
-    for device in devices:
-        marker = "OK" if device.status == "device" else "WARN"
-        model = f" model={device.model}" if device.model else ""
-        print(f"  [{marker}] {device.device_id} state={device.status}{model}")
+def _add_hidden_options(parser: argparse.ArgumentParser) -> None:
+    """Add hidden/advanced options not shown in help."""
+    hidden = parser.add_argument_group("Advanced (hidden)")
 
-    if device_id:
-        selected = next(
-            (device.device_id for device in ready if device.device_id == device_id),
-            None,
+    # These are intentionally hidden from help
+    for name, default, env_var, help_text in [
+        ("max-consecutive-failures", DEFAULT_MAX_CONSECUTIVE_FAILURES, "MAX_FAILURES", None),
+        ("max-repeated-actions", DEFAULT_MAX_REPEATED_ACTIONS, "MAX_REPEATED_ACTIONS", None),
+        ("context-turns", DEFAULT_CONTEXT_TURNS, "CONTEXT_TURNS", None),
+        ("observation-retries", DEFAULT_OBSERVATION_RETRIES, "OBSERVATION_RETRIES", None),
+        ("verification-retries", DEFAULT_VERIFICATION_RETRIES, "VERIFICATION_RETRIES", None),
+        ("verification-threshold", DEFAULT_VERIFICATION_THRESHOLD, "VERIFICATION_THRESHOLD", None),
+        ("max-recoveries", DEFAULT_MAX_RECOVERIES, "MAX_RECOVERIES", None),
+        ("recovery-attempts-per-failure", DEFAULT_RECOVERY_ATTEMPTS_PER_FAILURE, "RECOVERY_ATTEMPTS", None),
+    ]:
+        type_func = float if "threshold" in name else int
+        default_value = type_func(default)
+        env_value = os.getenv(env_var)
+        final_default = type_func(env_value) if env_value is not None else default_value
+        hidden.add_argument(
+            f"--{name.replace('_', '-')}",
+            type=type_func,
+            default=final_default,
+            help=argparse.SUPPRESS
         )
-        if selected is None:
-            print(f"  [FAILED] Device {device_id!r} is absent or not ready")
-            return False, None
-    else:
-        if not ready:
-            print("  [FAILED] No authorized device in `device` state")
-            return False, None
-        if len(ready) > 1:
-            print("  [FAILED] Multiple ready devices; use --device-id")
-            return False, None
-        selected = ready[0].device_id
-    print(f"  Selected: {selected}")
 
-    print("\n[3/4] Text input method")
-    try:
-        installed = is_adb_keyboard_installed(selected)
-        current = get_current_input_method(selected)
-        if installed:
-            print("  [OK] ADB Keyboard is installed")
-        else:
-            print("  [WARN] ADB Keyboard is not installed; Type actions will fail")
-        if current == ADB_KEYBOARD_IME:
-            print("  [OK] ADB Keyboard is active")
-        else:
-            print(f"  [INFO] Current IME: {current or '<unknown>'}")
-            if installed:
-                print("  PhoneAgent will switch to ADB Keyboard before typing")
-    except Exception as exc:
-        print(f"  [WARN] Could not inspect keyboard state: {exc}")
 
-    print("\n[4/4] Visual observation")
-    try:
-        screenshot = get_screenshot(selected, allow_fallback=False)
+# ============================================================================
+# Configuration Building
+# ============================================================================
+
+def _build_cli_config(args: argparse.Namespace) -> CLIConfig:
+    """Build configuration from parsed arguments."""
+    # Validate required configuration
+    missing = []
+    if not args.base_url:
+        missing.append("--base-url or BASE_URL env var")
+    if not args.model:
+        missing.append("--model or MODEL env var")
+    if not args.apikey:
+        missing.append("--apikey or API_KEY env var")
+
+    if missing:
         print(
-            f"  [OK] screenshot={screenshot.display_width}x{screenshot.display_height} "
-            f"encoded={screenshot.width}x{screenshot.height}"
-        )
-        if screenshot.is_blank:
-            print("  [FAILED] Screenshot is uniformly black/protected")
-            return False, None
-    except ScreenshotCaptureError as exc:
-        print(f"  [FAILED] {exc}")
-        return False, None
-
-    print("\n[PASSED] Device is ready for PhoneAgent")
-    print("=" * 64 + "\n")
-    return True, selected
-
-
-def check_model_api(config: ModelConfig) -> bool:
-    print("\n" + "=" * 64)
-    print("Model API Check")
-    print("=" * 64)
-    print(f"  Base URL: {config.base_url}")
-    print(f"  Model:    {config.model_name}")
-    try:
-        from openai import OpenAI, DefaultHttpxClient
-
-        client = OpenAI(
-            base_url=config.base_url,
-            api_key=config.api_key,
-            timeout=min(config.timeout, 30.0),
-            http_client=DefaultHttpxClient(trust_env=False),
-        )
-        response = client.chat.completions.create(
-            model=config.model_name,
-            messages=[{"role": "user", "content": "Reply with OK."}],
-            max_tokens=8,
-            temperature=0.0,
-            stream=False,
-        )
-        if not response.choices:
-            print("  [FAILED] API returned no choices")
-            return False
-        print("  [OK] API responded")
-        print("=" * 64 + "\n")
-        return True
-    except Exception as exc:
-        print(f"  [FAILED] {exc}")
-        print("=" * 64 + "\n")
-        return False
-
-
-def handle_device_commands(args: argparse.Namespace) -> int | None:
-    conn = ADBConnection()
-    if args.connect:
-        ok, message = conn.connect(args.connect)
-        print(f"[{'OK' if ok else 'FAILED'}] {message}")
-        return 0 if ok else 1
-    if args.disconnect:
-        address = None if args.disconnect == "all" else args.disconnect
-        ok, message = conn.disconnect(address)
-        print(f"[{'OK' if ok else 'FAILED'}] {message}")
-        return 0 if ok else 1
-    if args.enable_tcpip is not None:
-        ok, message = conn.enable_tcpip(args.enable_tcpip, args.device_id)
-        print(f"[{'OK' if ok else 'FAILED'}] {message}")
-        if ok:
-            ip = conn.get_device_ip(args.device_id)
-            if ip:
-                print(f"Connect later with: phoneagent --connect {ip}:{args.enable_tcpip}")
-        return 0 if ok else 1
-    if args.list_devices:
-        devices = conn.list_devices()
-        if not devices:
-            print("No ADB devices detected")
-            return 1
-        for device in devices:
-            print(
-                f"{device.device_id}\t{device.status}\t"
-                f"{device.connection_type.value}\t{device.model or ''}"
-            )
-        return 0
-    return None
-
-
-def print_configured_apps() -> None:
-    for app in sorted(set(list_supported_apps()), key=str.casefold):
-        print(app)
-
-
-def _select_ready_device(device_id: str | None) -> str | None:
-    conn = ADBConnection()
-    ready = [item for item in conn.list_devices() if item.status == "device"]
-    if device_id:
-        return device_id if any(item.device_id == device_id for item in ready) else None
-    if len(ready) == 1:
-        return ready[0].device_id
-    return None
-
-
-def print_device_apps(device_id: str | None) -> int:
-    selected = _select_ready_device(device_id)
-    if selected is None:
-        print(
-            "Unable to select one ready Android device. Connect a device or pass --device-id.",
+            f"Missing required configuration: {', '.join(missing)}",
             file=sys.stderr,
         )
-        return 1
-    try:
-        device = AndroidDevice(device_id=selected)
-        apps = device.list_launchable_apps()
-    except Exception as exc:
-        print(f"Failed to query installed configured apps: {exc}", file=sys.stderr)
-        return 1
-    if not apps:
-        print("No configured applications are installed", file=sys.stderr)
-        return 1
-    print(f"Device: {selected}")
-    print(f"Installed configured apps: {len(apps)}")
-    print("NAME\tPACKAGE")
-    for app in apps:
-        print(f"{app.display_name}\t{app.package_name}")
-    return 0
-
-
-def run_interactive(agent: PhoneAgent) -> None:
-    print("PhoneAgent interactive mode. Type exit/quit/q to stop.\n")
-    while True:
-        try:
-            task = input("Task> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nBye.")
-            return
-        if not task:
-            continue
-        if task.casefold() in {"exit", "quit", "q"}:
-            print("Bye.")
-            return
-        result = agent.run(task)
-        status = "SUCCESS" if agent.state.success else "FAILED"
-        print(
-            f"\n[{status}] {result} "
-            f"(phase={agent.state.phase.value}, recoveries={agent.state.recovery_count})"
-        )
-        if agent.last_trajectory_path:
-            print(f"Trajectory: {agent.last_trajectory_path}")
-        print()
-
-
-def main() -> int:
-    args = parse_args()
-    if args.list_configured_apps:
-        print_configured_apps()
-        return 0
-    if args.list_apps:
-        return print_device_apps(args.device_id)
-
-    command_status = handle_device_commands(args)
-    if command_status is not None:
-        return command_status
+        sys.exit(ExitCode.CONFIG_ERROR.value)
 
     try:
         model_config = ModelConfig(
@@ -421,6 +365,7 @@ def main() -> int:
             max_tokens=args.max_tokens,
             max_retries=args.model_retries,
         )
+
         agent_config = AgentConfig(
             max_steps=args.max_steps,
             max_runtime_seconds=args.max_runtime_seconds,
@@ -446,33 +391,383 @@ def main() -> int:
         )
     except ValueError as exc:
         print(f"Invalid configuration: {exc}", file=sys.stderr)
-        return 2
+        sys.exit(ExitCode.CONFIG_ERROR.value)
 
-    resolved_device_id = args.device_id
-    if not args.skip_system_check:
-        ok, resolved_device_id = check_system_requirements(args.device_id)
+    return CLIConfig(
+        model=model_config,
+        agent=agent_config,
+        device_id=args.device_id,
+        task=args.task,
+        skip_system_check=args.skip_system_check,
+        skip_model_check=args.skip_model_check,
+        quiet=args.quiet,
+    )
+
+
+# ============================================================================
+# Device Commands
+# ============================================================================
+
+def _handle_device_commands(args: argparse.Namespace) -> Optional[int]:
+    """Handle standalone device management commands."""
+    conn = ADBConnection()
+
+    if args.connect:
+        ok, message = conn.connect(args.connect)
+        print(f"[{'OK' if ok else 'FAILED'}] {message}")
+        return ExitCode.SUCCESS.value if ok else ExitCode.FAILURE.value
+
+    if args.disconnect is not None:
+        address = None if args.disconnect == "all" else args.disconnect
+        ok, message = conn.disconnect(address)
+        print(f"[{'OK' if ok else 'FAILED'}] {message}")
+        return ExitCode.SUCCESS.value if ok else ExitCode.FAILURE.value
+
+    if args.enable_tcpip is not None:
+        ok, message = conn.enable_tcpip(args.enable_tcpip, args.device_id)
+        print(f"[{'OK' if ok else 'FAILED'}] {message}")
+        if ok:
+            ip = conn.get_device_ip(args.device_id)
+            if ip:
+                print(f"Connect later with: phoneagent --connect {ip}:{args.enable_tcpip}")
+        return ExitCode.SUCCESS.value if ok else ExitCode.FAILURE.value
+
+    if args.list_devices:
+        devices = conn.list_devices()
+        if not devices:
+            print("No ADB devices detected")
+            return ExitCode.FAILURE.value
+        for device in devices:
+            print(
+                f"{device.device_id}\t{device.status}\t"
+                f"{device.connection_type.value}\t{device.model or ''}"
+            )
+        return ExitCode.SUCCESS.value
+
+    return None
+
+
+def _list_device_apps(device_id: Optional[str]) -> int:
+    """List configured apps on the selected device."""
+    selected = _select_ready_device(device_id)
+    if selected is None:
+        print(
+            "Unable to select one ready Android device. Connect a device or pass --device-id.",
+            file=sys.stderr,
+        )
+        return ExitCode.FAILURE.value
+
+    try:
+        device = AndroidDevice(device_id=selected)
+        apps = device.list_launchable_apps()
+    except Exception as exc:
+        print(f"Failed to query installed configured apps: {exc}", file=sys.stderr)
+        return ExitCode.FAILURE.value
+
+    if not apps:
+        print("No configured applications are installed", file=sys.stderr)
+        return ExitCode.FAILURE.value
+
+    print(f"Device: {selected}")
+    print(f"Installed configured apps: {len(apps)}")
+    print("NAME\tPACKAGE")
+    for app in apps:
+        print(f"{app.display_name}\t{app.package_name}")
+    return ExitCode.SUCCESS.value
+
+
+def _select_ready_device(device_id: Optional[str]) -> Optional[str]:
+    """Select a ready device, preferring the specified ID."""
+    conn = ADBConnection()
+    ready = [item for item in conn.list_devices() if item.status == "device"]
+
+    if device_id:
+        if any(item.device_id == device_id for item in ready):
+            return device_id
+        return None
+
+    if len(ready) == 1:
+        return ready[0].device_id
+    return None
+
+
+def _print_configured_apps() -> None:
+    """Print all configured app names."""
+    for app in sorted(set(list_supported_apps()), key=str.casefold):
+        print(app)
+
+
+# ============================================================================
+# System and Model Checks
+# ============================================================================
+
+def _check_system_requirements(device_id: Optional[str]) -> Tuple[bool, Optional[str]]:
+    """
+    Check ADB and Android device requirements.
+
+    Returns:
+        Tuple of (success, resolved_device_id)
+    """
+    print("\n" + "=" * 64)
+    print("Android / ADB Environment Check")
+    print("=" * 64)
+
+    # Check ADB
+    adb_path = shutil.which("adb")
+    print("\n[1/4] ADB executable")
+    if adb_path is None:
+        print("  [FAILED] adb was not found in PATH")
+        print("  Ubuntu: sudo apt install android-tools-adb")
+        return False, None
+
+    try:
+        result = run_adb(["version"], adb_path=adb_path, timeout=10)
+        first_line = (result.stdout or "").splitlines()[0]
+        print(f"  [OK] {first_line}")
+        print(f"  Path: {adb_path}")
+    except Exception as exc:
+        print(f"  [FAILED] {exc}")
+        return False, None
+
+    # Check connected devices
+    print("\n[2/4] Connected device")
+    conn = ADBConnection(adb_path=adb_path)
+    devices = conn.list_devices()
+    ready = [device for device in devices if device.status == "device"]
+
+    for device in devices:
+        marker = "OK" if device.status == "device" else "WARN"
+        model = f" model={device.model}" if device.model else ""
+        print(f"  [{marker}] {device.device_id} state={device.status}{model}")
+
+    selected = _select_ready_device(device_id)
+    if selected is None:
+        if device_id:
+            print(f"  [FAILED] Device {device_id!r} is absent or not ready")
+        else:
+            print("  [FAILED] No authorized device in `device` state or multiple ready devices; use --device-id")
+        return False, None
+
+    print(f"  Selected: {selected}")
+
+    # Check input method
+    print("\n[3/4] Text input method")
+    try:
+        installed = is_adb_keyboard_installed(selected)
+        current = get_current_input_method(selected)
+
+        if installed:
+            print("  [OK] ADB Keyboard is installed")
+        else:
+            print("  [WARN] ADB Keyboard is not installed; Type actions will fail")
+
+        if current == ADB_KEYBOARD_IME:
+            print("  [OK] ADB Keyboard is active")
+        else:
+            print(f"  [INFO] Current IME: {current or '<unknown>'}")
+            if installed:
+                print("  PhoneAgent will switch to ADB Keyboard before typing")
+    except Exception as exc:
+        print(f"  [WARN] Could not inspect keyboard state: {exc}")
+
+    # Check screenshot capability
+    print("\n[4/4] Visual observation")
+    try:
+        screenshot = get_screenshot(selected, allow_fallback=False)
+        print(
+            f"  [OK] screenshot={screenshot.display_width}x{screenshot.display_height} "
+            f"encoded={screenshot.width}x{screenshot.height}"
+        )
+        if screenshot.is_blank:
+            print("  [FAILED] Screenshot is uniformly black/protected")
+            return False, None
+    except ScreenshotCaptureError as exc:
+        print(f"  [FAILED] {exc}")
+        return False, None
+
+    print("\n[PASSED] Device is ready for PhoneAgent")
+    print("=" * 64 + "\n")
+    return True, selected
+
+
+def _check_model_api(config: ModelConfig) -> bool:
+    """
+    Check if the model API is accessible.
+
+    Returns:
+        True if API check passes, False otherwise.
+    """
+    print("\n" + "=" * 64)
+    print("Model API Check")
+    print("=" * 64)
+    print(f"  Base URL: {config.base_url}")
+    print(f"  Model:    {config.model_name}")
+
+    try:
+        # Late import to avoid dependency if not needed
+        from openai import OpenAI, DefaultHttpxClient
+
+        client = OpenAI(
+            base_url=config.base_url,
+            api_key=config.api_key,
+            timeout=min(config.timeout, 30.0) if config.timeout else 30.0,
+            http_client=DefaultHttpxClient(trust_env=False),
+        )
+
+        response = client.chat.completions.create(
+            model=config.model_name,
+            messages=[{"role": "user", "content": "Reply with OK."}],
+            max_tokens=8,
+            temperature=0.0,
+            stream=False,
+        )
+
+        if not response.choices:
+            print("  [FAILED] API returned no choices")
+            return False
+
+        content = getattr(response.choices[0].message, "content", "")
+        if not content or not content.strip():
+            print("  [FAILED] API returned empty response")
+            return False
+
+        print("  [OK] API responded successfully")
+        print("=" * 64 + "\n")
+        return True
+
+    except ImportError:
+        print("  [FAILED] OpenAI package not installed")
+        print("  Run: pip install openai")
+        return False
+    except Exception as exc:
+        print(f"  [FAILED] {exc}")
+        print("=" * 64 + "\n")
+        return False
+
+
+def check_system_requirements(
+    device_id: Optional[str] = None,
+) -> Tuple[bool, Optional[str]]:
+    """Public compatibility wrapper for the Android/ADB preflight check."""
+    return _check_system_requirements(device_id)
+
+
+def check_model_api(config: ModelConfig) -> bool:
+    """Public compatibility wrapper for the model endpoint preflight check."""
+    return _check_model_api(config)
+
+
+# ============================================================================
+# Agent Execution
+# ============================================================================
+
+def _run_agent(cli_config: CLIConfig) -> int:
+    """
+    Run the PhoneAgent with the given configuration.
+
+    Args:
+        cli_config: Aggregated CLI configuration.
+
+    Returns:
+        Exit code.
+    """
+    # Perform system checks if enabled
+    resolved_device_id = cli_config.device_id
+
+    if not cli_config.skip_system_check:
+        ok, resolved_device_id = _check_system_requirements(cli_config.device_id)
         if not ok:
-            return 1
-        agent_config.device_id = resolved_device_id
-    if not args.skip_model_check and not check_model_api(model_config):
-        return 1
+            return ExitCode.FAILURE.value
+        cli_config.agent.device_id = resolved_device_id
 
-    agent = PhoneAgent(model_config=model_config, agent_config=agent_config)
-    if args.task:
-        print(f"\nStarting task: {args.task}\n")
-        result = agent.run(args.task)
+    # Perform model check if enabled
+    if not cli_config.skip_model_check:
+        if not _check_model_api(cli_config.model):
+            return ExitCode.FAILURE.value
+
+    # Create agent
+    agent = PhoneAgent(
+        model_config=cli_config.model,
+        agent_config=cli_config.agent,
+    )
+
+    # Execute task or enter interactive mode
+    if cli_config.task:
+        return _run_task(agent, cli_config.task)
+
+    return _run_interactive(agent)
+
+
+def _run_task(agent: PhoneAgent, task: str) -> int:
+    """
+    Run a single task with the agent.
+
+    Returns:
+        Exit code.
+    """
+    print(f"\nStarting task: {task}\n")
+
+    try:
+        result = agent.run(task)
+    except Exception as exc:
+        print(f"\n[ERROR] Task execution failed: {exc}")
+        return ExitCode.FAILURE.value
+
+    status = "SUCCESS" if agent.state.success else "FAILED"
+    print(
+        f"\n[{status}] {result} "
+        f"(phase={agent.state.phase.value}, recoveries={agent.state.recovery_count})"
+    )
+
+    if agent.last_trajectory_path:
+        print(f"Trajectory: {agent.last_trajectory_path}")
+
+    return ExitCode.SUCCESS.value if agent.state.success else ExitCode.TASK_FAILURE.value
+
+
+def _run_interactive(agent: PhoneAgent) -> int:
+    """
+    Run the agent in interactive mode.
+
+    Returns:
+        Exit code (always SUCCESS on normal exit).
+    """
+    print("PhoneAgent interactive mode. Type exit/quit/q to stop.\n")
+
+    while True:
+        try:
+            task = input("Task> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nBye.")
+            return ExitCode.SUCCESS.value
+
+        if not task:
+            continue
+
+        if task.casefold() in {"exit", "quit", "q"}:
+            print("Bye.")
+            return ExitCode.SUCCESS.value
+
+        try:
+            result = agent.run(task)
+        except Exception as exc:
+            print(f"\n[ERROR] {exc}")
+            continue
+
         status = "SUCCESS" if agent.state.success else "FAILED"
         print(
             f"\n[{status}] {result} "
             f"(phase={agent.state.phase.value}, recoveries={agent.state.recovery_count})"
         )
+
         if agent.last_trajectory_path:
             print(f"Trajectory: {agent.last_trajectory_path}")
-        return 0 if agent.state.success else 3
+        print()
 
-    run_interactive(agent)
-    return 0
 
+# ============================================================================
+# Module Entry Point
+# ============================================================================
 
 if __name__ == "__main__":
     raise SystemExit(main())

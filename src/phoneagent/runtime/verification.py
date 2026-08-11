@@ -16,6 +16,7 @@ change. It cannot prove that the model clicked the semantically correct target.
 from __future__ import annotations
 
 import base64
+import hashlib
 from dataclasses import dataclass, field
 from enum import Enum
 from io import BytesIO
@@ -76,7 +77,7 @@ class VerificationResult:
     status: VerificationStatus
     policy: str
     message: str
-    command_success: bool
+    command_success: bool | None
     observable_effect_verified: bool | None
     semantic_effect_verified: bool | None = None
     screen_changed: bool | None = None
@@ -123,6 +124,7 @@ class ActionVerifier:
         "Type",
         "Back",
     }
+    _OPEN_SYSTEM_PANEL_ACTIONS = {"OpenNotifications", "OpenQuickSettings"}
 
     def __init__(self, config: VerificationConfig | None = None):
         self.config = config or VerificationConfig()
@@ -189,7 +191,7 @@ class ActionVerifier:
                 error_code="verification_observation_failed",
             )
 
-        difference = self._visual_difference_ratio(before, after)
+        difference = self._visual_difference_ratio(before, after, action=action)
         app_changed = bool(
             before.current_package != after.current_package
             or before.current_app != after.current_app
@@ -208,7 +210,14 @@ class ActionVerifier:
             "threshold": self.config.visual_change_threshold,
             "crop_top_ratio": self.config.crop_top_ratio,
             "crop_bottom_ratio": self.config.crop_bottom_ratio,
+            "comparison_region": (
+                "full_screen" if self._action_targets_system_chrome(action) else "app_content"
+            ),
             "execution_metadata": dict(execution.metadata),
+            "before_system_panel_visible": before.system_panel_visible,
+            "after_system_panel_visible": after.system_panel_visible,
+            "before_system_panel_name": before.system_panel_name,
+            "after_system_panel_name": after.system_panel_name,
         }
         common = {
             "screen_changed": screen_changed,
@@ -216,6 +225,76 @@ class ActionVerifier:
             "visual_difference_ratio": difference,
             "metadata": common_metadata,
         }
+
+        if action_name in self._OPEN_SYSTEM_PANEL_ACTIONS:
+            target = (
+                "notifications" if action_name == "OpenNotifications" else "quick settings"
+            )
+            panel_visible = after.system_panel_visible
+            system_panel_focused = self._is_system_panel_package(
+                after.current_package or after.current_app
+            )
+            if panel_visible is True or (
+                panel_visible is None and system_panel_focused and screen_changed
+            ):
+                return VerificationResult(
+                    status=VerificationStatus.PASSED,
+                    policy="system_panel_visible",
+                    message=f"The {target} system panel is visibly open",
+                    command_success=True,
+                    observable_effect_verified=True if screen_changed else None,
+                    semantic_effect_verified=True,
+                    **common,
+                )
+            return VerificationResult(
+                status=VerificationStatus.FAILED,
+                policy="system_panel_visible",
+                message=(
+                    f"{action_name} was requested but no visible system panel was detected"
+                ),
+                command_success=True,
+                observable_effect_verified=False,
+                semantic_effect_verified=False,
+                error_code="verification_system_panel_not_open",
+                **common,
+            )
+
+        if action_name == "CloseSystemPanel":
+            if after.system_panel_visible is False:
+                return VerificationResult(
+                    status=VerificationStatus.PASSED,
+                    policy="system_panel_hidden",
+                    message="The notification or quick-settings panel is closed",
+                    command_success=True,
+                    observable_effect_verified=True if screen_changed else None,
+                    semantic_effect_verified=True,
+                    **common,
+                )
+            if (
+                after.system_panel_visible is None
+                and before.system_panel_visible is True
+                and not self._is_system_panel_package(after.current_package or after.current_app)
+                and screen_changed
+            ):
+                return VerificationResult(
+                    status=VerificationStatus.PASSED,
+                    policy="system_panel_hidden",
+                    message="The system panel disappeared and the underlying app is visible",
+                    command_success=True,
+                    observable_effect_verified=True,
+                    semantic_effect_verified=True,
+                    **common,
+                )
+            return VerificationResult(
+                status=VerificationStatus.FAILED,
+                policy="system_panel_hidden",
+                message="CloseSystemPanel completed but the panel is still visible or unknown",
+                command_success=True,
+                observable_effect_verified=False,
+                semantic_effect_verified=False,
+                error_code="verification_system_panel_not_closed",
+                **common,
+            )
 
         if action_name == "Launch":
             expected_app = str(execution.metadata.get("package_name") or action.get("app", ""))
@@ -347,15 +426,19 @@ class ActionVerifier:
         )
 
     def _visual_difference_ratio(
-        self, before: ScreenObservation, after: ScreenObservation
+        self,
+        before: ScreenObservation,
+        after: ScreenObservation,
+        *,
+        action: dict[str, Any] | None = None,
     ) -> float | None:
         if before.screenshot.sha256 and before.screenshot.sha256 == after.screenshot.sha256:
             return 0.0
         try:
             before_image = self._decode_image(before.screenshot.base64_data).convert("L")
             after_image = self._decode_image(after.screenshot.base64_data).convert("L")
-            before_image = self._crop_system_chrome(before_image)
-            after_image = self._crop_system_chrome(after_image)
+            before_image = self._crop_system_chrome(before_image, action=action)
+            after_image = self._crop_system_chrome(after_image, action=action)
             size = (self.config.image_compare_size, self.config.image_compare_size)
             before_image = before_image.resize(size)
             after_image = after_image.resize(size)
@@ -367,14 +450,57 @@ class ActionVerifier:
                 return 1.0 if before.screenshot.sha256 != after.screenshot.sha256 else 0.0
             return None
 
-    def _crop_system_chrome(self, image: Image.Image) -> Image.Image:
+    def visual_signature(self, observation: ScreenObservation) -> str | None:
+        """Hash normalized application content for stagnation detection."""
+        try:
+            image = self._decode_image(observation.screenshot.base64_data).convert("L")
+            image = self._crop_system_chrome(image)
+            size = (self.config.image_compare_size, self.config.image_compare_size)
+            normalized = image.resize(size)
+            return hashlib.sha256(normalized.tobytes()).hexdigest()
+        except Exception:
+            return observation.screenshot.sha256 or None
+
+    def _crop_system_chrome(
+        self,
+        image: Image.Image,
+        *,
+        action: dict[str, Any] | None = None,
+    ) -> Image.Image:
         """Ignore small top/bottom bands that commonly contain clocks/navigation bars."""
+        if action is not None and self._action_targets_system_chrome(action):
+            return image
         width, height = image.size
         top = round(height * self.config.crop_top_ratio)
         bottom = height - round(height * self.config.crop_bottom_ratio)
         if bottom <= top:
             return image
         return image.crop((0, top, width, bottom))
+
+    def _action_targets_system_chrome(self, action: dict[str, Any] | None) -> bool:
+        if not action:
+            return False
+        if action.get("action") in {
+            "OpenNotifications",
+            "OpenQuickSettings",
+            "CloseSystemPanel",
+        }:
+            return True
+        points = [
+            action.get(field)
+            for field in ("element", "start", "end")
+            if action.get(field) is not None
+        ]
+        top_limit = self.config.crop_top_ratio * 999
+        bottom_limit = (1 - self.config.crop_bottom_ratio) * 999
+        for point in points:
+            if not isinstance(point, (list, tuple)) or len(point) != 2:
+                continue
+            y = point[1]
+            if isinstance(y, (int, float)) and not isinstance(y, bool):
+                if y < top_limit or y > bottom_limit:
+                    return True
+        return False
 
     @staticmethod
     def _decode_image(encoded: str) -> Image.Image:
@@ -392,3 +518,11 @@ class ActionVerifier:
         if expected_package and actual_package:
             return expected_package == actual_package
         return expected.strip().casefold() == actual.strip().casefold()
+
+    @staticmethod
+    def _is_system_panel_package(value: str) -> bool:
+        folded = str(value or "").casefold()
+        return any(
+            marker in folded
+            for marker in ("com.android.systemui", "systemui", "controlcenter", "upslide")
+        )

@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
+import asyncio
+from contextlib import suppress
+import inspect
 import json
 import os
 import re
+from threading import Event, Thread
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
@@ -12,12 +17,37 @@ from typing import Any, Callable, Iterable
 from phoneagent.config.messages import get_message
 
 
+_TRUNCATION_FINISH_REASONS = frozenset({"length", "max_tokens", "max_output_tokens"})
+
+
+def _is_truncation_finish_reason(finish_reason: str | None) -> bool:
+    return str(finish_reason or "").casefold() in _TRUNCATION_FINISH_REASONS
+
+
 class ModelProtocolError(RuntimeError):
     """Raised when a model response is empty or violates the action protocol."""
 
-    def __init__(self, message: str, *, raw_content: str | None = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        raw_content: str | None = None,
+        finish_reason: str | None = None,
+        metrics: dict[str, Any] | None = None,
+    ):
         super().__init__(message)
         self.raw_content = raw_content
+        self.finish_reason = finish_reason
+        self.metrics = dict(metrics or {})
+
+    @property
+    def truncated(self) -> bool:
+        """Whether generation stopped because the provider's output limit was reached."""
+        return _is_truncation_finish_reason(self.finish_reason)
+
+
+class ModelRequestCancelled(RuntimeError):
+    """Raised when a caller cancels an in-flight model request."""
 
 
 @dataclass(slots=True)
@@ -25,36 +55,35 @@ class ModelConfig:
     """Configuration for the OpenAI-compatible model endpoint."""
 
     base_url: str = field(
-        default_factory=lambda: os.getenv("PHONE_AGENT_BASE_URL", "http://localhost:8000/v1")
+        default_factory=lambda: os.getenv("BASE_URL", "http://localhost:8000/v1")
     )
-    api_key: str = field(default_factory=lambda: os.getenv("PHONE_AGENT_API_KEY", "EMPTY"))
+    api_key: str = field(default_factory=lambda: os.getenv("API_KEY", "EMPTY"))
     model_name: str = field(
-        default_factory=lambda: os.getenv("PHONE_AGENT_MODEL", "autoglm-phone-9b")
+        default_factory=lambda: os.getenv("MODEL", "autoglm-phone-9b")
     )
     max_tokens: int = field(
-        default_factory=lambda: int(os.getenv("PHONE_AGENT_MAX_TOKENS", "3000"))
+        default_factory=lambda: int(os.getenv("MAX_TOKENS", "3000"))
     )
     temperature: float = field(
-        default_factory=lambda: float(os.getenv("PHONE_AGENT_TEMPERATURE", "0"))
+        default_factory=lambda: float(os.getenv("TEMPERATURE", "0"))
     )
-    top_p: float = field(default_factory=lambda: float(os.getenv("PHONE_AGENT_TOP_P", "0.85")))
+    top_p: float = field(default_factory=lambda: float(os.getenv("TOP_P", "0.85")))
     frequency_penalty: float = field(
-        default_factory=lambda: float(os.getenv("PHONE_AGENT_FREQUENCY_PENALTY", "0.2"))
+        default_factory=lambda: float(os.getenv("FREQUENCY_PENALTY", "0.0"))
     )
     timeout: float = field(
-        default_factory=lambda: float(os.getenv("PHONE_AGENT_MODEL_TIMEOUT", "120"))
+        default_factory=lambda: float(os.getenv("MODEL_TIMEOUT", "120"))
     )
     max_retries: int = field(
-        default_factory=lambda: int(os.getenv("PHONE_AGENT_MODEL_RETRIES", "2"))
+        default_factory=lambda: int(os.getenv("MODEL_RETRIES", "2"))
     )
     retry_backoff: float = field(
-        default_factory=lambda: float(os.getenv("PHONE_AGENT_MODEL_RETRY_BACKOFF", "1"))
+        default_factory=lambda: float(os.getenv("MODEL_RETRY_BACKOFF", "1"))
     )
     extra_body: dict[str, Any] = field(default_factory=dict)
-    stream: bool = True
     capture_usage: bool = field(
         default_factory=lambda: (
-            os.getenv("PHONE_AGENT_CAPTURE_USAGE", "1").strip().lower()
+            os.getenv("CAPTURE_USAGE", "1").strip().lower()
             not in {"0", "false", "no", "off"}
         )
     )
@@ -99,15 +128,11 @@ class ModelResponse:
     @property
     def truncated(self) -> bool:
         """Whether the provider stopped generation because the output limit was hit."""
-        return str(self.finish_reason or "").casefold() in {
-            "length",
-            "max_tokens",
-            "max_output_tokens",
-        }
+        return _is_truncation_finish_reason(self.finish_reason)
 
     def to_assistant_message_content(self) -> str:
         """Serialize response back into the prompt-compatible format."""
-        return f"<answer>{self.action}</answer>"
+        return self.action
 
 
 class StreamingBoundaryDetector:
@@ -117,6 +142,9 @@ class StreamingBoundaryDetector:
         self.markers = tuple(markers)
         if not self.markers:
             raise ValueError("At least one boundary marker is required")
+        self._marker_patterns = tuple(
+            (marker, re.compile(re.escape(marker), re.IGNORECASE)) for marker in self.markers
+        )
         self.max_marker_len = max(len(marker) for marker in self.markers)
         self.reset()
 
@@ -151,58 +179,116 @@ class StreamingBoundaryDetector:
         return remaining
 
     def _find_first_marker(self, text: str) -> tuple[int, str] | None:
-        matches = [(text.find(marker), marker) for marker in self.markers]
-        matches = [(idx, marker) for idx, marker in matches if idx >= 0]
+        matches = [
+            (match.start(), marker)
+            for marker, pattern in self._marker_patterns
+            if (match := pattern.search(text)) is not None
+        ]
         return min(matches, key=lambda item: item[0]) if matches else None
 
 
 class ModelResponseParser:
-    """Split optional reasoning from the final executable answer.
+    """Split optional reasoning from the final executable action.
 
-    The only executable region is one terminal ``<answer>...</answer>`` block.
-    Any preceding text is inert reasoning. No separate thinking envelope or
-    unwrapped-action compatibility grammar is supported.
+    The only executable region is one terminal ``do(...)`` or ``finish(...)``
+    call. Any preceding text is inert reasoning. XML envelopes, JSON, Markdown
+    fences, multiple calls and trailing text are not part of the protocol.
     """
 
-    ANSWER_RE = re.compile(
-        r"^(?P<thinking>.*?)<answer>(?P<action>.*?)</answer>\s*$",
-        re.DOTALL | re.IGNORECASE,
-    )
-    ANSWER_OPEN_RE = re.compile(r"<answer>", re.IGNORECASE)
-    ANSWER_CLOSE_RE = re.compile(r"</answer>", re.IGNORECASE)
+    ACTION_CALL_RE = re.compile(r"(?<![A-Za-z0-9_])(?:do|finish)\s*\(")
+    LEGACY_ACTION_TAG_RE = re.compile(r"</?action(?:\s|>)", re.IGNORECASE)
 
     @classmethod
     def parse(cls, raw_content: str) -> tuple[str, str]:
         content = (raw_content or "").strip()
         if not content:
             raise ModelProtocolError("Model response content is empty")
-        if (
-            len(cls.ANSWER_OPEN_RE.findall(content)) != 1
-            or len(cls.ANSWER_CLOSE_RE.findall(content)) != 1
-        ):
+        if cls.LEGACY_ACTION_TAG_RE.search(content):
+            raise ModelProtocolError("XML action envelopes are not supported")
+
+        candidates = list(cls.ACTION_CALL_RE.finditer(content))
+        terminal: list[tuple[int, int]] = []
+        for candidate in candidates:
+            end = cls._balanced_call_end(content, candidate.start())
+            if end is not None and not content[end:].strip():
+                terminal.append((candidate.start(), end))
+
+        if len(terminal) != 1:
             raise ModelProtocolError(
-                "Model response must contain exactly one <answer>...</answer> block"
+                "Model response must end with exactly one complete do(...) or finish(...) call"
             )
 
-        envelope = cls.ANSWER_RE.fullmatch(content)
-        if not envelope:
+        action_start, action_end = terminal[0]
+        if any(candidate.start() < action_start for candidate in candidates):
             raise ModelProtocolError(
-                "The <answer>...</answer> block must be complete and end the model response"
+                "Model response must contain exactly one do(...) or finish(...) call"
             )
-        action = envelope.group("action").strip()
-        if not action:
-            raise ModelProtocolError("Model response did not contain an action")
-        return envelope.group("thinking").strip(), action
+        return content[:action_start].strip(), content[action_start:action_end].strip()
+
+    @staticmethod
+    def _balanced_call_end(text: str, start: int) -> int | None:
+        """Return the end of one balanced call without evaluating model text."""
+        open_paren = text.find("(", start)
+        if open_paren < 0:
+            return None
+        depth = 0
+        quote: str | None = None
+        escaped = False
+        for index in range(open_paren, len(text)):
+            char = text[index]
+            if quote is not None:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+                continue
+            if char in {'"', "'"}:
+                quote = char
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    return index + 1
+                if depth < 0:
+                    return None
+        return None
 
 
 StreamCallback = Callable[[str], None]
 
 
-class ModelClient:
-    """OpenAI-compatible client with bounded retries and protocol validation."""
+class BaseModelClient(ABC):
+    """Protocol for a model client that the agent runtime can call.
+
+    Subclasses encapsulate provider-specific initialisation, streaming,
+    retry policies and response parsing.  The runtime only depends on this
+    interface, so swapping providers (OpenAI-compatible, Anthropic, Gemini,
+    local vLLM, …) does not touch the agent loop.
+    """
 
     def __init__(self, config: ModelConfig | None = None):
         self.config = config or ModelConfig()
+
+    @abstractmethod
+    def request(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        print_stream: bool = True,
+        stream_callback: StreamCallback | None = None,
+        cancel_event: Event | None = None,
+    ) -> ModelResponse:
+        """Send a request and return a parsed, protocol-conformant response."""
+
+
+class OpenAIModelClient(BaseModelClient):
+    """Streaming OpenAI-compatible client with retries and protocol validation."""
+
+    def __init__(self, config: ModelConfig | None = None):
+        super().__init__(config)
         try:
             from openai import OpenAI, DefaultHttpxClient
         except ImportError as exc:
@@ -215,7 +301,6 @@ class ModelClient:
             timeout=self.config.timeout,
             http_client=DefaultHttpxClient(trust_env=False),
         )
-        self.boundary_detector = StreamingBoundaryDetector(markers=("<answer>",))
 
     def request(
         self,
@@ -223,6 +308,7 @@ class ModelClient:
         *,
         print_stream: bool = True,
         stream_callback: StreamCallback | None = None,
+        cancel_event: Event | None = None,
     ) -> ModelResponse:
         """Send a request and retry transient API failures with backoff."""
         if not messages:
@@ -231,11 +317,13 @@ class ModelClient:
         attempts = self.config.max_retries + 1
 
         for attempt in range(1, attempts + 1):
+            self._raise_if_cancelled(cancel_event)
             try:
                 response = self._request_once(
                     messages,
                     print_stream=print_stream,
                     stream_callback=stream_callback,
+                    cancel_event=cancel_event,
                 )
                 response.attempts = attempt
                 return response
@@ -243,7 +331,11 @@ class ModelClient:
                 last_error = exc
                 if attempt >= attempts or not self._is_retryable(exc):
                     raise
-                time.sleep(self.config.retry_backoff * (2 ** (attempt - 1)))
+                delay = self.config.retry_backoff * (2 ** (attempt - 1))
+                if cancel_event is not None and cancel_event.wait(delay):
+                    raise ModelRequestCancelled("Model request cancelled") from exc
+                if cancel_event is None:
+                    time.sleep(delay)
 
         assert last_error is not None
         raise last_error
@@ -254,7 +346,9 @@ class ModelClient:
         *,
         print_stream: bool,
         stream_callback: StreamCallback | None,
+        cancel_event: Event | None,
     ) -> ModelResponse:
+        self._raise_if_cancelled(cancel_event)
         start_time = time.monotonic()
         time_to_first_token: float | None = None
         time_to_thinking_end: float | None = None
@@ -275,19 +369,29 @@ class ModelClient:
             "extra_body": self.config.extra_body,
         }
 
-        if self.config.stream:
-            self.boundary_detector.reset()
-            stream_kwargs = dict(request_kwargs)
-            if self.config.capture_usage:
-                stream_kwargs["stream_options"] = {"include_usage": True}
-            try:
-                stream = self.client.chat.completions.create(**stream_kwargs, stream=True)
-            except Exception as exc:
-                if "stream_options" not in stream_kwargs or not self._usage_option_unsupported(exc):
-                    raise
-                stream_kwargs.pop("stream_options", None)
-                stream = self.client.chat.completions.create(**stream_kwargs, stream=True)
+        boundary_detector = StreamingBoundaryDetector(markers=("do(", "finish("))
+        stream_kwargs = dict(request_kwargs)
+        if self.config.capture_usage:
+            stream_kwargs["stream_options"] = {"include_usage": True}
+        try:
+            stream = self.client.chat.completions.create(**stream_kwargs, stream=True)
+        except Exception as exc:
+            if "stream_options" not in stream_kwargs or not self._usage_option_unsupported(exc):
+                raise
+            stream_kwargs.pop("stream_options", None)
+            stream = self.client.chat.completions.create(**stream_kwargs, stream=True)
+        watcher_stop: Event | None = None
+        if cancel_event is not None:
+            watcher_stop = Event()
+            Thread(
+                target=self._close_stream_when_cancelled,
+                args=(stream, cancel_event, watcher_stop),
+                name="phoneagent-model-cancel",
+                daemon=True,
+            ).start()
+        try:
             for chunk in stream:
+                self._raise_if_cancelled(cancel_event)
                 usage = getattr(chunk, "usage", None)
                 if usage is not None:
                     prompt_tokens, completion_tokens, total_tokens = self._extract_usage(usage)
@@ -300,62 +404,73 @@ class ModelClient:
                 delta = choice.delta
                 content = self._content_to_text(getattr(delta, "content", None))
                 reasoning = self._content_to_text(getattr(delta, "reasoning_content", None))
+                if time_to_first_token is None and (reasoning or content):
+                    time_to_first_token = time.monotonic() - start_time
                 if reasoning:
                     reasoning_parts.append(reasoning)
                     if print_stream:
                         self._emit_text(reasoning, stream_callback)
                 if not content:
                     continue
-                if time_to_first_token is None:
-                    time_to_first_token = time.monotonic() - start_time
                 content_parts.append(content)
-                printable, transitioned = self.boundary_detector.feed(content)
+                printable, transitioned = boundary_detector.feed(content)
                 if print_stream and printable:
                     self._emit_text(printable, stream_callback)
                 if transitioned and time_to_thinking_end is None:
                     time_to_thinking_end = time.monotonic() - start_time
                     if print_stream and stream_callback is None:
                         print(flush=True)
-            remaining = self.boundary_detector.finalize()
-            if print_stream and remaining:
-                self._emit_text(remaining, stream_callback)
-        else:
-            response = self.client.chat.completions.create(**request_kwargs, stream=False)
-            if not response.choices:
-                raise ModelProtocolError("Model API returned no choices")
-            choice = response.choices[0]
-            finish_reason = (
-                str(choice.finish_reason) if getattr(choice, "finish_reason", None) else None
-            )
-            message = choice.message
-            content_parts.append(self._content_to_text(message.content))
-            reasoning = self._content_to_text(getattr(message, "reasoning_content", None))
-            if reasoning:
-                reasoning_parts.append(reasoning)
-            time_to_first_token = time.monotonic() - start_time
-            usage = getattr(response, "usage", None)
-            if usage is not None:
-                prompt_tokens, completion_tokens, total_tokens = self._extract_usage(usage)
+            self._raise_if_cancelled(cancel_event)
+        except Exception as exc:
+            if cancel_event is not None and cancel_event.is_set():
+                raise ModelRequestCancelled("Model request cancelled") from exc
+            raise
+        finally:
+            if watcher_stop is not None:
+                watcher_stop.set()
+            self._close_sync_stream(stream)
+        remaining = boundary_detector.finalize()
+        if print_stream and remaining:
+            self._emit_text(remaining, stream_callback)
 
         total_time = time.monotonic() - start_time
+        error_metrics = {
+            "time_to_first_token": time_to_first_token,
+            "time_to_thinking_end": time_to_thinking_end,
+            "total_time": total_time,
+            "finish_reason": finish_reason,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "truncated": _is_truncation_finish_reason(finish_reason),
+        }
         raw_content = "".join(content_parts).strip()
         reasoning_content = "".join(reasoning_parts).strip()
         if not raw_content:
             raise ModelProtocolError(
                 "Model returned an empty content payload",
                 raw_content=raw_content,
+                finish_reason=finish_reason,
+                metrics=error_metrics,
             )
 
         try:
             thinking, action = ModelResponseParser.parse(raw_content)
         except ModelProtocolError as exc:
-            raise ModelProtocolError(str(exc), raw_content=raw_content) from exc
+            raise ModelProtocolError(
+                str(exc),
+                raw_content=raw_content,
+                finish_reason=finish_reason,
+                metrics=error_metrics,
+            ) from exc
         if not thinking and reasoning_content:
             thinking = reasoning_content
         if not action:
             raise ModelProtocolError(
                 "Model response did not contain an action",
                 raw_content=raw_content,
+                finish_reason=finish_reason,
+                metrics=error_metrics,
             )
         if time_to_thinking_end is None and thinking:
             time_to_thinking_end = total_time
@@ -434,7 +549,7 @@ class ModelClient:
 
     @staticmethod
     def _is_retryable(exc: Exception) -> bool:
-        if isinstance(exc, ModelProtocolError):
+        if isinstance(exc, (ModelProtocolError, ModelRequestCancelled)):
             return False
         status_code = getattr(exc, "status_code", None)
         if status_code in {408, 409, 429} or (isinstance(status_code, int) and status_code >= 500):
@@ -473,6 +588,31 @@ class ModelClient:
         if total_tokens is not None:
             print(f"Total Tokens: {total_tokens}")
         print("=" * 50)
+
+    @staticmethod
+    def _raise_if_cancelled(cancel_event: Event | None) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise ModelRequestCancelled("Model request cancelled")
+
+    @staticmethod
+    def _close_sync_stream(stream: Any) -> None:
+        close = getattr(stream, "close", None)
+        if callable(close):
+            with suppress(Exception):
+                close()
+
+    @classmethod
+    def _close_stream_when_cancelled(
+        cls,
+        stream: Any,
+        cancel_event: Event,
+        watcher_stop: Event,
+    ) -> None:
+        while not watcher_stop.is_set():
+            if cancel_event.wait(0.05):
+                if not watcher_stop.is_set():
+                    cls._close_sync_stream(stream)
+                return
 
 
 class MessageBuilder:
@@ -520,3 +660,262 @@ class MessageBuilder:
     @staticmethod
     def build_screen_info(**info: Any) -> str:
         return json.dumps(info, ensure_ascii=False, separators=(",", ":"))
+
+
+class AsyncOpenAIModelClient(BaseModelClient):
+    """Async OpenAI-compatible client using ``AsyncOpenAI`` for non-blocking streaming.
+
+    Cancellation is cooperative: every yielded chunk is an opportunity for the
+    event loop to service a cancel request.
+    """
+
+    def __init__(self, config: ModelConfig | None = None):
+        super().__init__(config)
+        try:
+            from openai import AsyncOpenAI, DefaultAsyncHttpxClient
+        except ImportError as exc:
+            raise RuntimeError(
+                "The openai package is required. Install dependencies with: pip install -e ."
+            ) from exc
+        self.client = AsyncOpenAI(
+            base_url=self.config.base_url,
+            api_key=self.config.api_key,
+            timeout=self.config.timeout,
+            http_client=DefaultAsyncHttpxClient(trust_env=False),
+        )
+
+    async def request(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        print_stream: bool = True,
+        stream_callback: StreamCallback | None = None,
+        cancel_event: Event | None = None,
+    ) -> ModelResponse:
+        """Send an async request and retry transient API failures with backoff."""
+        if not messages:
+            raise ValueError("messages cannot be empty")
+        last_error: Exception | None = None
+        attempts = self.config.max_retries + 1
+
+        for attempt in range(1, attempts + 1):
+            OpenAIModelClient._raise_if_cancelled(cancel_event)
+            try:
+                response = await self._request_once(
+                    messages,
+                    print_stream=print_stream,
+                    stream_callback=stream_callback,
+                    cancel_event=cancel_event,
+                )
+                response.attempts = attempt
+                return response
+            except Exception as exc:
+                last_error = exc
+                if attempt >= attempts or not self._is_retryable(exc):
+                    raise
+                delay = self.config.retry_backoff * (2 ** (attempt - 1))
+                await self._sleep_with_cancellation(delay, cancel_event)
+
+        assert last_error is not None
+        raise last_error
+
+    async def _request_once(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        print_stream: bool,
+        stream_callback: StreamCallback | None,
+        cancel_event: Event | None,
+    ) -> ModelResponse:
+        OpenAIModelClient._raise_if_cancelled(cancel_event)
+        start_time = time.monotonic()
+        time_to_first_token: float | None = None
+        time_to_thinking_end: float | None = None
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        finish_reason: str | None = None
+        prompt_tokens: int | None = None
+        completion_tokens: int | None = None
+        total_tokens: int | None = None
+
+        request_kwargs = {
+            "messages": messages,
+            "model": self.config.model_name,
+            "max_tokens": self.config.max_tokens,
+            "temperature": self.config.temperature,
+            "top_p": self.config.top_p,
+            "frequency_penalty": self.config.frequency_penalty,
+            "extra_body": self.config.extra_body,
+        }
+
+        boundary_detector = StreamingBoundaryDetector(markers=("do(", "finish("))
+        stream_kwargs = dict(request_kwargs)
+        if self.config.capture_usage:
+            stream_kwargs["stream_options"] = {"include_usage": True}
+        try:
+            stream = await self.client.chat.completions.create(**stream_kwargs, stream=True)
+        except Exception as exc:
+            if "stream_options" not in stream_kwargs or not self._usage_option_unsupported(exc):
+                raise
+            stream_kwargs.pop("stream_options", None)
+            stream = await self.client.chat.completions.create(**stream_kwargs, stream=True)
+        try:
+            async for chunk in stream:
+                OpenAIModelClient._raise_if_cancelled(cancel_event)
+                usage = getattr(chunk, "usage", None)
+                if usage is not None:
+                    prompt_tokens, completion_tokens, total_tokens = self._extract_usage(usage)
+                if not getattr(chunk, "choices", None):
+                    continue
+                choice = chunk.choices[0]
+                chunk_finish_reason = getattr(choice, "finish_reason", None)
+                if chunk_finish_reason:
+                    finish_reason = str(chunk_finish_reason)
+                delta = choice.delta
+                content = self._content_to_text(getattr(delta, "content", None))
+                reasoning = self._content_to_text(getattr(delta, "reasoning_content", None))
+                if time_to_first_token is None and (reasoning or content):
+                    time_to_first_token = time.monotonic() - start_time
+                if reasoning:
+                    reasoning_parts.append(reasoning)
+                    if print_stream:
+                        self._emit_text(reasoning, stream_callback)
+                if not content:
+                    continue
+                content_parts.append(content)
+                printable, transitioned = boundary_detector.feed(content)
+                if print_stream and printable:
+                    self._emit_text(printable, stream_callback)
+                if transitioned and time_to_thinking_end is None:
+                    time_to_thinking_end = time.monotonic() - start_time
+                    if print_stream and stream_callback is None:
+                        print(flush=True)
+            OpenAIModelClient._raise_if_cancelled(cancel_event)
+        except Exception as exc:
+            if cancel_event is not None and cancel_event.is_set():
+                raise ModelRequestCancelled("Model request cancelled") from exc
+            raise
+        finally:
+            await self._close_async_stream(stream)
+        remaining = boundary_detector.finalize()
+        if print_stream and remaining:
+            self._emit_text(remaining, stream_callback)
+
+        total_time = time.monotonic() - start_time
+        error_metrics = {
+            "time_to_first_token": time_to_first_token,
+            "time_to_thinking_end": time_to_thinking_end,
+            "total_time": total_time,
+            "finish_reason": finish_reason,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "truncated": _is_truncation_finish_reason(finish_reason),
+        }
+        raw_content = "".join(content_parts).strip()
+        reasoning_content = "".join(reasoning_parts).strip()
+        if not raw_content:
+            raise ModelProtocolError(
+                "Model returned an empty content payload",
+                raw_content=raw_content,
+                finish_reason=finish_reason,
+                metrics=error_metrics,
+            )
+
+        try:
+            thinking, action = ModelResponseParser.parse(raw_content)
+        except ModelProtocolError as exc:
+            raise ModelProtocolError(
+                str(exc),
+                raw_content=raw_content,
+                finish_reason=finish_reason,
+                metrics=error_metrics,
+            ) from exc
+        if not thinking and reasoning_content:
+            thinking = reasoning_content
+        if not action:
+            raise ModelProtocolError(
+                "Model response did not contain an action",
+                raw_content=raw_content,
+                finish_reason=finish_reason,
+                metrics=error_metrics,
+            )
+        if time_to_thinking_end is None and thinking:
+            time_to_thinking_end = total_time
+        if print_stream:
+            self._print_metrics(
+                time_to_first_token,
+                time_to_thinking_end,
+                total_time,
+                finish_reason=finish_reason,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+            )
+
+        return ModelResponse(
+            thinking=thinking,
+            action=action,
+            raw_content=raw_content,
+            time_to_first_token=time_to_first_token,
+            time_to_thinking_end=time_to_thinking_end,
+            total_time=total_time,
+            finish_reason=finish_reason,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+        )
+
+    @staticmethod
+    def _emit_text(text: str, callback: StreamCallback | None) -> None:
+        if callback is not None:
+            callback(text)
+        else:
+            print(text, end="", flush=True)
+
+    @staticmethod
+    def _is_retryable(exc: Exception) -> bool:
+        return OpenAIModelClient._is_retryable(exc)
+
+    @staticmethod
+    def _usage_option_unsupported(exc: Exception) -> bool:
+        return OpenAIModelClient._usage_option_unsupported(exc)
+
+    @staticmethod
+    def _content_to_text(content: Any) -> str:
+        return OpenAIModelClient._content_to_text(content)
+
+    @staticmethod
+    def _extract_usage(usage: Any) -> tuple[int | None, int | None, int | None]:
+        return OpenAIModelClient._extract_usage(usage)
+
+    def _print_metrics(self, *args: Any, **kwargs: Any) -> None:
+        OpenAIModelClient._print_metrics(self, *args, **kwargs)
+
+    @staticmethod
+    async def _close_async_stream(stream: Any) -> None:
+        close = getattr(stream, "close", None)
+        if not callable(close):
+            return
+        with suppress(Exception):
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+
+    @staticmethod
+    async def _sleep_with_cancellation(seconds: float, cancel_event: Event | None) -> None:
+        if cancel_event is None:
+            await asyncio.sleep(seconds)
+            return
+        deadline = time.monotonic() + seconds
+        while True:
+            OpenAIModelClient._raise_if_cancelled(cancel_event)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            await asyncio.sleep(min(0.05, remaining))
+
+
+# Backward-compatible alias – existing code that references ``ModelClient``
+# continues to work and receives an OpenAI-compatible implementation.
+ModelClient = OpenAIModelClient

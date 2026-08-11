@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from phoneagent.runtime import AgentEvent, EventType
-from webui.runtime import ConsoleRuntime, TrajectoryStore, _build_configs
+from webui.runtime import ConsoleRuntime, TrajectoryStore, _build_configs, _build_pricing
 from webui.server import ConsoleHTTPServer
 
 
@@ -31,12 +31,13 @@ class _FakeState:
         self.goal = ""
         self.success = True
         self.recovery_count = 0
+        self.phase: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "goal": self.goal,
             "success": self.success,
-            "phase": "completed" if self.success else "failed",
+            "phase": self.phase or ("completed" if self.success else "failed"),
             "current_step": 1,
             "current_app": "WeChat",
             "recovery_count": self.recovery_count,
@@ -56,6 +57,14 @@ class _FakeAgent:
         self.state = _FakeState()
         self.last_trajectory_path: str | None = None
         self.confirmed: bool | None = None
+        self.cancel_requested = False
+        self.cancel_message = ""
+
+    def request_cancel(self, message: str) -> bool:
+        self.cancel_requested = True
+        self.cancel_message = message
+        self.state.phase = "cancelled"
+        return True
 
     def run(self, task: str) -> str:
         self.state.goal = task
@@ -118,11 +127,26 @@ def _model_check(_config: Any) -> bool:
 def test_web_config_uses_lazy_launch_timeout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("PHONE_AGENT_APP_LAUNCH_TIMEOUT_SECONDS", "9.5")
+    monkeypatch.setenv("APP_LAUNCH_TIMEOUT_SECONDS", "9.5")
     _model, agent, _trajectory = _build_configs(tmp_path)
 
     assert agent.app_launch_timeout_seconds == 9.5
     assert not hasattr(agent, "app_catalog")
+
+
+def test_web_pricing_config_for_cost_estimates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INPUT_PRICE_PER_1M_TOKENS", "2.5")
+    monkeypatch.setenv("OUTPUT_PRICE_PER_1M_TOKENS", "10")
+    monkeypatch.setenv("COST_CURRENCY", "CNY")
+
+    pricing = _build_pricing()
+
+    assert pricing == {
+        "input_per_million_tokens": 2.5,
+        "output_per_million_tokens": 10.0,
+        "currency": "CNY",
+        "configured": True,
+    }
 
 
 def test_console_checks_once_and_reuses_agent_for_tasks(tmp_path: Path) -> None:
@@ -215,6 +239,37 @@ def test_sensitive_confirmation_round_trip(tmp_path: Path) -> None:
     runtime.close()
 
 
+def test_waiting_prompt_can_cancel_the_entire_task(tmp_path: Path) -> None:
+    created: list[_FakeAgent] = []
+
+    def factory(**kwargs: Any) -> _FakeAgent:
+        agent = _FakeAgent(require_confirmation=True, **kwargs)
+        created.append(agent)
+        return agent
+
+    runtime = ConsoleRuntime(
+        tmp_path,
+        agent_factory=factory,
+        device_checker=_device_check,
+        model_checker=_model_check,
+    )
+    runtime.start_checks()
+    _wait_for(lambda: runtime.snapshot()["startup"]["status"] == "ready")
+    runtime.start_task("place an order")
+    _wait_for(lambda: runtime.snapshot()["pending_prompt"] is not None)
+
+    cancelling = runtime.cancel_task()
+    assert cancelling["status"] == "cancelling"
+    _wait_for(lambda: runtime.snapshot()["task"]["status"] == "cancelled")
+
+    assert created[0].cancel_requested is True
+    assert created[0].confirmed is False
+    assert runtime.snapshot()["pending_prompt"] is None
+    events = runtime.events_after(0)["events"]
+    assert any(event["type"] == "web_task_cancel_requested" for event in events)
+    runtime.close()
+
+
 def test_trajectory_store_lists_reads_and_rejects_traversal(tmp_path: Path) -> None:
     runs = tmp_path / "runs"
     runs.mkdir()
@@ -264,11 +319,32 @@ def test_http_console_serves_frontend_and_accepts_task(tmp_path: Path) -> None:
             assert 'id="sidebarCollapse"' in html
             assert 'class="conversation-shell"' in html
             assert 'class="composer-dock"' in html
+            assert 'id="stopButton"' in html
+            assert 'id="stopPromptTask"' in html
+            assert 'id="taskUsagePanel"' in html
+            assert 'id="taskUsageChart"' in html
+            assert 'id="trajectoryUsagePanel"' in html
+            assert 'class="work-process"' in html
+            assert 'id="workProcessToggle"' in html
+            assert 'id="workProcessDetails"' in html
+            assert 'id="processNotice"' in html
+            assert 'aria-expanded="false"' in html
+            assert "最新进展会显示在上方" in html
+            assert "最终结果" in html
+            assert 'class="live-state"' not in html
+            assert 'class="phase-rail"' not in html
             assert 'class="dashboard-grid"' not in html
             assert 'class="execution-panel"' not in html
             assert 'class="sidebar-runtime"' not in html
             assert html.index('class="conversation-shell"') < html.index('class="preflight-gate"')
             assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+
+        with urlopen(f"{base_url}/app.js", timeout=2) as response:
+            javascript = response.read().decode("utf-8")
+            assert "payload.raw_content" in javascript
+            assert "payload?.protocol_error" in javascript
+            assert "document.createElementNS" in javascript
+            assert "INPUT_PRICE_PER_1M_TOKENS" in javascript
 
         request = Request(
             f"{base_url}/api/tasks",
@@ -284,6 +360,48 @@ def test_http_console_serves_frontend_and_accepts_task(tmp_path: Path) -> None:
             state = json.loads(response.read())
             assert state["task"]["goal"] == "open WeChat"
             assert state["task"]["status"] == "success"
+    finally:
+        server.shutdown()
+        server.server_close()
+        runtime.close()
+        thread.join(timeout=2)
+
+
+def test_http_console_cancels_task_waiting_for_confirmation(tmp_path: Path) -> None:
+    runtime = ConsoleRuntime(
+        tmp_path,
+        agent_factory=lambda **kwargs: _FakeAgent(require_confirmation=True, **kwargs),
+        device_checker=_device_check,
+        model_checker=_model_check,
+    )
+    runtime.start_checks()
+    _wait_for(lambda: runtime.snapshot()["startup"]["status"] == "ready")
+    server = ConsoleHTTPServer(("127.0.0.1", 0), runtime)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        start_request = Request(
+            f"{base_url}/api/tasks",
+            data=json.dumps({"task": "place an order"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(start_request, timeout=2) as response:
+            assert response.status == 202
+        _wait_for(lambda: runtime.snapshot()["pending_prompt"] is not None)
+
+        cancel_request = Request(
+            f"{base_url}/api/tasks/cancel",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(cancel_request, timeout=2) as response:
+            payload = json.loads(response.read())
+            assert response.status == 202
+            assert payload["task"]["status"] == "cancelling"
+        _wait_for(lambda: runtime.snapshot()["task"]["status"] == "cancelled")
     finally:
         server.shutdown()
         server.server_close()

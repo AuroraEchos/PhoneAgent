@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
 from typing import Optional
 
 APP_PACKAGES: dict[str, str] = {
@@ -271,3 +275,132 @@ def list_supported_apps() -> list[str]:
 def list_canonical_app_mapping() -> dict[str, str]:
     """Return package -> standard app name mapping for UI display."""
     return _CANONICAL_PACKAGE_TO_NAME.copy()
+
+
+@dataclass(frozen=True, slots=True)
+class TaskEntryApp:
+    """A conservatively inferred application entry point for one user task."""
+
+    app_name: str
+    package_name: str
+    evidence: str
+
+
+_OPEN_VERB = r"(?:打开|启动|进入|运行|切换到|前往|去|登陆|登录|登入)"
+_LAUNCH_VERBS = (
+    r"(?:"
+    r"(?:帮|给|替|为)(?:我|你|咱|俺)(?:"
+    r"(?:打开|启动|进入|运行|切换到|前往|去|登陆|登录|登入|用|使用|查|搜|找|看|"
+    r"看一下|看下|看看|搜一下|查一下|找一下)(?:一下|下|一|了)?"
+    r")"
+    r"|"
+    r"(?:我(?:想|要|来|去)(?:一下|下)?)"
+    r"|"
+    r"(?:打开|启动|进入|运行|切换到|前往|去|登陆|登录|登入|用|使用|查|搜|找)"
+    r")"
+)
+_APP_FILLER = r"(?:一下|下|一(?:下|个|次))?\s*(?:手机(?:上|里|中|桌面)?的?|桌面(?:上|里|中)?的?|应用|APP|App|app)?\s*"
+_NEGATIONS = ("不要", "别", "无需", "不必", "禁止", "避免", "不用", "取消")
+_CLAUSE_BOUNDARY = re.compile(r"[，。！？；,.;!?\n]")
+_MINI_PROGRAM_CONTAINER_PACKAGES = {"com.tencent.mm", "com.eg.android.AlipayGphone"}
+
+
+def _task_alias_pattern(alias: str) -> str:
+    """Build a task-text pattern while tolerating whitespace in Latin aliases."""
+    escaped_parts = [re.escape(part) for part in alias.split()]
+    escaped = r"\s*".join(escaped_parts)
+    prefix = r"(?<![A-Za-z0-9_])" if alias[:1].isascii() and alias[:1].isalnum() else ""
+    suffix = r"(?![A-Za-z0-9_])" if alias[-1:].isascii() and alias[-1:].isalnum() else ""
+    return prefix + escaped + suffix
+
+
+def _is_negated_task_match(task: str, start: int) -> bool:
+    clause_prefix = _CLAUSE_BOUNDARY.split(task[:start])[-1]
+    return any(marker in clause_prefix[-12:] for marker in _NEGATIONS)
+
+
+def infer_task_entry_app(task: str) -> TaskEntryApp | None:
+    """Infer an explicitly requested first application without visual guessing.
+
+    Matching is intentionally conservative: merely mentioning a configured alias is
+    insufficient. The alias must be attached to a launch verb, used as an operation
+    container (for example ``在微信中``), or identify a mini-program container.
+    """
+    text = str(task or "").strip()
+    if not text:
+        return None
+
+    candidates: list[tuple[int, int, int, str, str, str]] = []
+    aliases = sorted(APP_PACKAGES, key=lambda value: (-len(value), value.casefold()))
+    for alias in aliases:
+        package_name = APP_PACKAGES[alias]
+        alias_pattern = _task_alias_pattern(alias)
+        patterns = (
+            (
+                300,
+                rf"{alias_pattern}(?:\s*(?:中|里|内|上)(?:的)?)?"
+                r"[^，。！？；,.;!?\n]{0,30}小程序",
+                "mini_program_container",
+            ),
+            (220, rf"{_LAUNCH_VERBS}\s*{_APP_FILLER}{alias_pattern}", "launch_verb"),
+            (
+                200,
+                rf"(?:在|用|使用|通过|从)\s*{alias_pattern}"
+                rf"(?:\s*(?:中|里|内|上|里面|里边)(?:的)?)?",
+                "operation_container",
+            ),
+            (160, rf"{alias_pattern}\s*(?:中|里|内)(?:的)?", "contained_task"),
+            (
+                230,
+                rf"(?:open|launch|start|use|go\s+to)\s+(?:the\s+)?{alias_pattern}",
+                "english_launch_verb",
+            ),
+            (
+                210,
+                rf"(?:我(?:想|要|来|去|打算|准备)|请(?:帮我?|你)?)\s*"
+                rf"(?:用|使用|打开|启动|进入|查|搜|找|看一下|看看|去|到|登录|登陆)"
+                rf"(?:一下|下|一(?:下|个|次))?\s*{_APP_FILLER}{alias_pattern}",
+                "intent_launch",
+            ),
+            (
+                190,
+                rf"(?:帮|给|替|为)(?:我|你|咱|俺|我们|你们)\s*"
+                rf"(?:用|使用|打开|启动|进入|查|搜|找|看一下|看看|去|到|登录|登陆)"
+                rf"(?:一下|下|一(?:下|个|次))?\s*{_APP_FILLER}{alias_pattern}",
+                "helper_launch",
+            ),
+        )
+        for score, pattern, evidence in patterns:
+            if (
+                evidence == "mini_program_container"
+                and package_name not in _MINI_PROGRAM_CONTAINER_PACKAGES
+            ):
+                continue
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match is None or _is_negated_task_match(text, match.start()):
+                continue
+            candidates.append((score, match.start(), len(alias), alias, package_name, evidence))
+
+    package_match = re.search(
+        rf"{_LAUNCH_VERBS}\s*{_APP_FILLER}"
+        r"(?P<package>[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if package_match is not None and not _is_negated_task_match(text, package_match.start()):
+        package_name = package_match.group("package")
+        candidates.append(
+            (220, package_match.start(), len(package_name), package_name, package_name, "package")
+        )
+
+    if not candidates:
+        return None
+    _score, _start, _length, alias, package_name, evidence = min(
+        candidates,
+        key=lambda item: (-item[0], item[1], -item[2]),
+    )
+    return TaskEntryApp(
+        app_name=get_canonical_app_name(package_name) or alias,
+        package_name=package_name,
+        evidence=evidence,
+    )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import math
 import re
+from threading import Event
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -44,6 +45,15 @@ _ACTION_ALIASES = {
     "swipe": "Swipe",
     "back": "Back",
     "home": "Home",
+    "open notifications": "OpenNotifications",
+    "open_notifications": "OpenNotifications",
+    "opennotifications": "OpenNotifications",
+    "open quick settings": "OpenQuickSettings",
+    "open_quick_settings": "OpenQuickSettings",
+    "openquicksettings": "OpenQuickSettings",
+    "close system panel": "CloseSystemPanel",
+    "close_system_panel": "CloseSystemPanel",
+    "closesystempanel": "CloseSystemPanel",
     "double tap": "Double Tap",
     "double_tap": "Double Tap",
     "doubletap": "Double Tap",
@@ -85,8 +95,8 @@ def finish(
 def parse_action(response: str) -> dict[str, Any]:
     """Parse exactly one Python-style ``do(...)`` or ``finish(...)`` call.
 
-    Model-envelope parsing is deliberately handled before this function. JSON,
-    Markdown code fences, multiple calls and malformed-string repair are
+    Model-response splitting is deliberately handled before this function.
+    JSON, Markdown code fences, multiple calls and malformed-string repair are
     rejected so protocol errors enter bounded recovery instead of being
     executed heuristically.
     """
@@ -357,6 +367,7 @@ class ActionHandler:
         takeover_callback: TakeoverCallback | None = None,
         note_callback: NoteCallback | None = None,
         api_callback: APICallback | None = None,
+        cancel_event: Event | None = None,
         *,
         max_wait_seconds: float = 15.0,
         max_gesture_duration_ms: int = 10_000,
@@ -366,6 +377,7 @@ class ActionHandler:
         self.takeover_callback = takeover_callback or self._default_takeover
         self.note_callback = note_callback
         self.api_callback = api_callback
+        self.cancel_event = cancel_event
         self.max_wait_seconds = max(0.0, float(max_wait_seconds))
         self.max_gesture_duration_ms = max(1, int(max_gesture_duration_ms))
         self.task = ""
@@ -403,6 +415,9 @@ class ActionHandler:
             "Swipe": self._handle_swipe,
             "Back": self._handle_back,
             "Home": self._handle_home,
+            "OpenNotifications": self._handle_open_notifications,
+            "OpenQuickSettings": self._handle_open_quick_settings,
+            "CloseSystemPanel": self._handle_close_system_panel,
             "Double Tap": self._handle_double_tap,
             "Long Press": self._handle_long_press,
             "Wait": self._handle_wait,
@@ -432,6 +447,40 @@ class ActionHandler:
                 f"{action_name} failed: {exc}",
                 error_code="action_execution_failed",
                 metadata={"exception_type": type(exc).__name__},
+            )
+
+    def execute_system_panel_fallback(
+        self,
+        action: dict[str, Any],
+        screen_width: int,
+        screen_height: int,
+    ) -> ActionResult:
+        """Execute the hidden edge-gesture fallback for an open-panel action."""
+        try:
+            action = validate_action(action)
+            action_name = str(action.get("action", ""))
+            if action_name not in {"OpenNotifications", "OpenQuickSettings"}:
+                raise ActionParseError(
+                    f"System-panel fallback is unavailable for {action_name!r}"
+                )
+            metadata = self.device.open_system_panel_gesture(
+                action_name,
+                screen_width,
+                screen_height,
+            )
+            return ActionResult(
+                True,
+                False,
+                message=f"Executed {action_name} edge-gesture fallback",
+                metadata={"system_panel": metadata, "internal_fallback": True},
+            )
+        except Exception as exc:
+            return ActionResult(
+                False,
+                False,
+                message=f"System-panel gesture fallback failed: {exc}",
+                error_code="system_panel_fallback_failed",
+                metadata={"exception_type": type(exc).__name__, "internal_fallback": True},
             )
 
     @staticmethod
@@ -532,10 +581,48 @@ class ActionHandler:
         self.device.home()
         return ActionResult(True, False)
 
+    def _handle_open_notifications(
+        self, action: dict[str, Any], width: int, height: int
+    ) -> ActionResult:
+        del action, width, height
+        return self._system_panel_command_result(self.device.open_notifications())
+
+    def _handle_open_quick_settings(
+        self, action: dict[str, Any], width: int, height: int
+    ) -> ActionResult:
+        del action, width, height
+        return self._system_panel_command_result(self.device.open_quick_settings())
+
+    def _handle_close_system_panel(
+        self, action: dict[str, Any], width: int, height: int
+    ) -> ActionResult:
+        del action, width, height
+        return self._system_panel_command_result(self.device.close_system_panel())
+
+    @staticmethod
+    def _system_panel_command_result(result: Any) -> ActionResult:
+        metadata = result.to_dict()
+        return ActionResult(
+            bool(result.success),
+            False,
+            message=str(result.message),
+            error_code=None if result.success else "system_panel_command_failed",
+            metadata={"system_panel": metadata},
+        )
+
     def _handle_wait(self, action: dict[str, Any], width: int, height: int) -> ActionResult:
         requested = _parse_duration_seconds(action.get("duration", "1 second"))
         duration = min(requested, self.max_wait_seconds)
-        time.sleep(duration)
+        if self.cancel_event is not None and self.cancel_event.wait(duration):
+            return ActionResult(
+                False,
+                True,
+                message="Task cancelled during wait",
+                error_code="user_cancelled",
+                metadata={"requested_seconds": requested, "waited_seconds": None},
+            )
+        if self.cancel_event is None:
+            time.sleep(duration)
         message = None
         if duration < requested:
             message = f"Wait duration was capped from {requested:g}s to {duration:g}s"

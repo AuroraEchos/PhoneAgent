@@ -31,6 +31,10 @@ const elements = {
   trajectoryMeta: document.querySelector("#trajectoryMeta"),
   trajectoryEvents: document.querySelector("#trajectoryEvents"),
   downloadTrajectory: document.querySelector("#downloadTrajectory"),
+  trajectoryUsagePanel: document.querySelector("#trajectoryUsagePanel"),
+  trajectoryUsageSummary: document.querySelector("#trajectoryUsageSummary"),
+  trajectoryUsageChart: document.querySelector("#trajectoryUsageChart"),
+  trajectoryUsageNote: document.querySelector("#trajectoryUsageNote"),
   connection: document.querySelector(".connection-pill"),
   connectionLabel: document.querySelector("#connectionLabel"),
   sessionClock: document.querySelector("#sessionClock"),
@@ -41,17 +45,24 @@ const elements = {
   historyDetail: document.querySelector("#historyDetail"),
   taskStatus: document.querySelector("#taskStatus"),
   currentGoal: document.querySelector("#currentGoal"),
-  liveState: document.querySelector("#liveState"),
-  executionStatusText: document.querySelector("#executionStatusText"),
-  executionStatusDetail: document.querySelector("#executionStatusDetail"),
-  phaseRail: document.querySelector("#phaseRail"),
+  workProcess: document.querySelector("#workProcess"),
+  workProcessToggle: document.querySelector("#workProcessToggle"),
+  workProcessDetails: document.querySelector("#workProcessDetails"),
+  processTitle: document.querySelector("#processTitle"),
+  processLatest: document.querySelector("#processLatest"),
+  processNotice: document.querySelector("#processNotice"),
   eventFeed: document.querySelector("#eventFeed"),
   eventCount: document.querySelector("#eventCount"),
   taskResultPanel: document.querySelector("#taskResultPanel"),
   taskResult: document.querySelector("#taskResult"),
+  taskUsagePanel: document.querySelector("#taskUsagePanel"),
+  taskUsageSummary: document.querySelector("#taskUsageSummary"),
+  taskUsageChart: document.querySelector("#taskUsageChart"),
+  taskUsageNote: document.querySelector("#taskUsageNote"),
   taskForm: document.querySelector("#taskForm"),
   taskInput: document.querySelector("#taskInput"),
   runButton: document.querySelector("#runButton"),
+  stopButton: document.querySelector("#stopButton"),
   taskHint: document.querySelector("#taskHint"),
   composerState: document.querySelector("#composerState"),
   promptModal: document.querySelector("#promptModal"),
@@ -61,6 +72,7 @@ const elements = {
   promptSymbol: document.querySelector("#promptSymbol"),
   rejectPrompt: document.querySelector("#rejectPrompt"),
   acceptPrompt: document.querySelector("#acceptPrompt"),
+  stopPromptTask: document.querySelector("#stopPromptTask"),
   toast: document.querySelector("#toast"),
 };
 
@@ -77,14 +89,17 @@ const appState = {
   toastTimer: null,
   preflightExitTimer: null,
   hasEnteredConsole: false,
+  processExpanded: false,
 };
 
 const taskLabels = {
   idle: "空闲",
   running: "执行中",
   waiting_user: "等待你操作",
+  cancelling: "正在停止",
   success: "已完成",
   failed: "未完成",
+  cancelled: "已停止",
 };
 const phaseLabels = {
   idle: "等待任务",
@@ -95,11 +110,11 @@ const phaseLabels = {
   verifying: "正在验证操作结果",
   recovering: "正在调整执行策略",
   waiting_user: "正在等待你的操作",
+  cancelling: "正在停止当前任务",
   completed: "任务已经完成",
   failed: "任务执行未完成",
   cancelled: "任务已取消",
 };
-const phaseOrder = ["observing", "planning", "executing", "verifying", "recovering"];
 const eventLabels = {
   start: "任务开始",
   phase_change: "进入新阶段",
@@ -118,7 +133,15 @@ const eventLabels = {
   web_task_started: "任务已提交",
   web_task_finished: "任务已结束",
   web_task_error: "任务异常",
+  web_task_cancel_requested: "请求停止任务",
 };
+
+const busyTaskStatuses = new Set(["running", "waiting_user", "cancelling"]);
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function isTaskBusy(status) {
+  return busyTaskStatuses.has(status);
+}
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -170,6 +193,183 @@ function formatDate(timestamp) {
 function truncate(text, length = 46) {
   const value = String(text || "").trim();
   return value.length > length ? `${value.slice(0, length)}…` : value;
+}
+
+function finiteNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function formatTokens(value) {
+  return value === null ? "—" : new Intl.NumberFormat("zh-CN").format(Math.round(value));
+}
+
+function usageSamples(events, pricing) {
+  let request = 0;
+  return events.filter((event) => event.type === "model_response").map((event) => {
+    request += 1;
+    const metrics = event.payload?.metrics || {};
+    const promptTokens = finiteNumber(metrics.prompt_tokens);
+    const completionTokens = finiteNumber(metrics.completion_tokens);
+    let totalTokens = finiteNumber(metrics.total_tokens);
+    if (totalTokens === null && (promptTokens !== null || completionTokens !== null)) {
+      totalTokens = (promptTokens || 0) + (completionTokens || 0);
+    }
+    const totalTime = finiteNumber(metrics.total_time);
+    const hasBillableTokens = promptTokens !== null || completionTokens !== null;
+    const cost = pricing?.configured && hasBillableTokens
+      ? ((promptTokens || 0) * Number(pricing.input_per_million_tokens || 0)
+        + (completionTokens || 0) * Number(pricing.output_per_million_tokens || 0)) / 1_000_000
+      : null;
+    return {
+      request,
+      step: Number.isInteger(event.step) ? event.step : event.payload?.step,
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      totalTime,
+      cost,
+    };
+  });
+}
+
+function svgNode(name, attributes = {}, content = null) {
+  const node = document.createElementNS(SVG_NS, name);
+  Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, String(value)));
+  if (content !== null) node.textContent = content;
+  return node;
+}
+
+function metricPoints(samples, xFor, yFor, field) {
+  return samples
+    .map((sample, index) => ({ sample, index }))
+    .filter(({ sample }) => sample[field] !== null)
+    .map(({ sample, index }) => `${xFor(index)},${yFor(sample[field])}`)
+    .join(" ");
+}
+
+function renderUsageChart(samples, target, pricing) {
+  const width = 760;
+  const hasCost = Boolean(pricing?.configured && samples.some((sample) => sample.cost !== null));
+  const height = hasCost ? 320 : 250;
+  const left = 55;
+  const right = 705;
+  const top = 34;
+  const bottom = 188;
+  const plotWidth = right - left;
+  const plotHeight = bottom - top;
+  const maxTokens = Math.max(1, ...samples.map((sample) => sample.totalTokens || 0));
+  const maxTime = Math.max(1, ...samples.map((sample) => sample.totalTime || 0));
+  const xFor = (index) => samples.length === 1
+    ? left + plotWidth / 2
+    : left + (index / (samples.length - 1)) * plotWidth;
+  const tokenY = (value) => bottom - (value / maxTokens) * plotHeight;
+  const timeY = (value) => bottom - (value / maxTime) * plotHeight;
+  const svg = svgNode("svg", { viewBox: `0 0 ${width} ${height}`, "aria-hidden": "true" });
+
+  for (let index = 0; index <= 4; index += 1) {
+    const ratio = index / 4;
+    const y = top + ratio * plotHeight;
+    svg.append(svgNode("line", { x1: left, y1: y, x2: right, y2: y, class: "usage-grid-line" }));
+    svg.append(svgNode("text", { x: left - 8, y: y + 3, class: "usage-axis-label", "text-anchor": "end" }, formatTokens(maxTokens * (1 - ratio))));
+    svg.append(svgNode("text", { x: right + 8, y: y + 3, class: "usage-axis-label", "text-anchor": "start" }, `${(maxTime * (1 - ratio)).toFixed(1)}s`));
+  }
+
+  svg.append(svgNode("text", { x: left, y: 16, class: "usage-series-label token" }, "总 Token"));
+  svg.append(svgNode("text", { x: right, y: 16, class: "usage-series-label time", "text-anchor": "end" }, "模型耗时"));
+  const tokenPoints = metricPoints(samples, xFor, tokenY, "totalTokens");
+  const timePoints = metricPoints(samples, xFor, timeY, "totalTime");
+  if (tokenPoints) svg.append(svgNode("polyline", { points: tokenPoints, class: "usage-line token" }));
+  if (timePoints) svg.append(svgNode("polyline", { points: timePoints, class: "usage-line time" }));
+
+  samples.forEach((sample, index) => {
+    const x = xFor(index);
+    if (sample.totalTokens !== null) {
+      const point = svgNode("circle", { cx: x, cy: tokenY(sample.totalTokens), r: 4, class: "usage-point token" });
+      point.append(svgNode("title", {}, `请求 ${sample.request}：${formatTokens(sample.totalTokens)} Token`));
+      svg.append(point);
+    }
+    if (sample.totalTime !== null) {
+      const point = svgNode("circle", { cx: x, cy: timeY(sample.totalTime), r: 4, class: "usage-point time" });
+      point.append(svgNode("title", {}, `请求 ${sample.request}：${sample.totalTime.toFixed(2)} 秒`));
+      svg.append(point);
+    }
+    svg.append(svgNode("text", { x, y: bottom + 22, class: "usage-x-label", "text-anchor": "middle" }, `#${sample.request}`));
+  });
+
+  if (hasCost) {
+    const costTop = 245;
+    const costBottom = 292;
+    const maxCost = Math.max(0.000001, ...samples.map((sample) => sample.cost || 0));
+    const costY = (value) => costBottom - (value / maxCost) * (costBottom - costTop);
+    svg.append(svgNode("line", { x1: left, y1: costBottom, x2: right, y2: costBottom, class: "usage-grid-line" }));
+    svg.append(svgNode("text", { x: left, y: costTop - 10, class: "usage-series-label cost" }, `单次费用 · ${pricing.currency}`));
+    const costPoints = metricPoints(samples, xFor, costY, "cost");
+    if (costPoints) svg.append(svgNode("polyline", { points: costPoints, class: "usage-line cost" }));
+    samples.forEach((sample, index) => {
+      if (sample.cost === null) return;
+      const point = svgNode("circle", { cx: xFor(index), cy: costY(sample.cost), r: 3.5, class: "usage-point cost" });
+      point.append(svgNode("title", {}, `请求 ${sample.request}：${pricing.currency} ${sample.cost.toFixed(6)}`));
+      svg.append(point);
+    });
+  }
+
+  const breakdown = document.createElement("div");
+  breakdown.className = "usage-breakdown";
+  samples.forEach((sample) => {
+    const item = document.createElement("span");
+    const costText = sample.cost === null ? "" : ` · ${pricing.currency} ${sample.cost.toFixed(6)}`;
+    item.textContent = `#${sample.request}  ${formatTokens(sample.totalTokens)} tok · ${sample.totalTime === null ? "—" : `${sample.totalTime.toFixed(1)}s`}${costText}`;
+    breakdown.append(item);
+  });
+  target.replaceChildren(svg, breakdown);
+}
+
+function renderUsagePanel(events, status, panel, summary, chart, note) {
+  const finished = ["success", "failed", "cancelled"].includes(status);
+  const pricing = appState.snapshot?.pricing || {};
+  const samples = usageSamples(events, pricing);
+  panel.hidden = !finished || !samples.length;
+  if (panel.hidden) return;
+
+  const sum = (field) => samples.reduce((total, sample) => total + (sample[field] || 0), 0);
+  const promptTokens = sum("promptTokens");
+  const completionTokens = sum("completionTokens");
+  const totalTokens = sum("totalTokens");
+  const totalTime = sum("totalTime");
+  const hasPromptTokens = samples.some((sample) => sample.promptTokens !== null);
+  const hasCompletionTokens = samples.some((sample) => sample.completionTokens !== null);
+  const hasTotalTokens = samples.some((sample) => sample.totalTokens !== null);
+  const hasTotalTime = samples.some((sample) => sample.totalTime !== null);
+  const totalCost = samples.some((sample) => sample.cost !== null) ? sum("cost") : null;
+  const missingUsage = samples.some((sample) => (
+    sample.promptTokens === null || sample.completionTokens === null
+  ));
+  const cards = [
+    ["模型请求", `${samples.length} 次`],
+    ["输入 Token", formatTokens(hasPromptTokens ? promptTokens : null)],
+    ["输出 Token", formatTokens(hasCompletionTokens ? completionTokens : null)],
+    ["总 Token", formatTokens(hasTotalTokens ? totalTokens : null)],
+    ["模型耗时", hasTotalTime ? `${totalTime.toFixed(1)} 秒` : "—"],
+    ["估算费用", totalCost === null
+      ? (pricing.configured ? "不可用" : "未配置")
+      : `${pricing.currency} ${totalCost.toFixed(6)}`],
+  ];
+  summary.replaceChildren();
+  cards.forEach(([label, value]) => {
+    const item = document.createElement("span");
+    const small = document.createElement("small");
+    const strong = document.createElement("b");
+    small.textContent = label;
+    strong.textContent = value;
+    item.append(small, strong);
+    summary.append(item);
+  });
+  renderUsageChart(samples, chart, pricing);
+  note.textContent = pricing.configured
+    ? `费用按当前配置估算：输入 ${pricing.currency} ${pricing.input_per_million_tokens}/百万 Token，输出 ${pricing.currency} ${pricing.output_per_million_tokens}/百万 Token。${missingUsage ? " 部分请求未返回用量，汇总可能不完整。" : ""}`
+    : "尚未配置 Token 单价；设置 INPUT_PRICE_PER_1M_TOKENS 和 OUTPUT_PRICE_PER_1M_TOKENS 后即可显示费用曲线。";
 }
 
 function renderChecks(startup) {
@@ -256,7 +456,7 @@ function enterConsole() {
 function renderRuntime(snapshot) {
   const { startup, task } = snapshot;
   const ready = startup.status === "ready";
-  const busy = ["running", "waiting_user"].includes(task.status);
+  const busy = isTaskBusy(task.status);
   const runtimeIdentity = ready
     ? ` · ${startup.device_id || "device"} · ${startup.model_name || "model"}`
     : "";
@@ -266,6 +466,9 @@ function renderRuntime(snapshot) {
     : `${busy ? "Agent 正在执行" : "Agent 已就绪"}${runtimeIdentity}`;
   elements.taskInput.disabled = !ready || busy;
   elements.runButton.disabled = !ready || busy || !elements.taskInput.value.trim();
+  elements.runButton.hidden = busy;
+  elements.stopButton.hidden = !busy;
+  elements.stopButton.disabled = task.status === "cancelling";
   elements.taskHint.textContent = !ready
     ? "启动检查通过后即可提交任务"
     : (busy ? "当前任务结束后可以继续提交" : "Enter 发送，Shift + Enter 换行");
@@ -274,7 +477,7 @@ function renderRuntime(snapshot) {
 function renderTask(task) {
   if (appState.viewingHistory) return;
   const status = task.status || "idle";
-  const busy = ["running", "waiting_user"].includes(status);
+  const busy = isTaskBusy(status);
   if ((!task.goal || appState.draftMode) && !busy) {
     showWelcome();
     elements.taskStatus.dataset.status = "idle";
@@ -290,21 +493,21 @@ function renderTask(task) {
   elements.conversationTitle.textContent = truncate(task.goal || "当前任务", 34);
   elements.taskStatus.dataset.status = status;
   elements.taskStatus.querySelector("span").textContent = taskLabels[status] || status;
-  elements.liveState.dataset.active = String(busy);
-  elements.liveState.dataset.status = status;
-  const effectivePhase = status === "waiting_user" ? "waiting_user" : (task.phase || status);
-  elements.executionStatusText.textContent = phaseLabels[effectivePhase] || taskLabels[status] || status;
-  elements.executionStatusDetail.textContent = [
-    `第 ${task.current_step || 0} 步`,
-    task.current_app || null,
-    task.recoveries ? `${task.recoveries} 次恢复` : null,
-  ].filter(Boolean).join(" · ");
-  renderPhaseRail(task.phase, status);
+  const effectivePhase = ["waiting_user", "cancelling"].includes(status)
+    ? status
+    : (task.phase || status);
+  elements.workProcess.dataset.active = String(busy);
+  elements.workProcess.dataset.status = status;
+  elements.processTitle.textContent = busy
+    ? (phaseLabels[effectivePhase] || "PhoneAgent 正在工作")
+    : (status === "success" ? "工作过程已完成" : "工作过程已结束");
 
   const resultText = task.error || task.result || "";
   elements.taskResultPanel.hidden = !resultText || busy;
   elements.taskResultPanel.dataset.status = status;
-  elements.taskResultPanel.querySelector(":scope > span").textContent = status === "failed" ? "!" : "✓";
+  elements.taskResultPanel.querySelector(":scope > span").textContent = status === "success"
+    ? "✓"
+    : (status === "cancelled" ? "■" : "!");
   elements.taskResult.textContent = resultText;
   renderEvents();
 }
@@ -315,14 +518,6 @@ function showWelcome() {
   elements.threadView.hidden = true;
   elements.historyDetail.hidden = true;
   elements.conversationTitle.textContent = "新任务";
-}
-
-function renderPhaseRail(phase, status) {
-  const currentIndex = phaseOrder.indexOf(phase);
-  elements.phaseRail.querySelectorAll("[data-phase]").forEach((node, index) => {
-    node.classList.toggle("active", phaseOrder[index] === phase && status === "running");
-    node.classList.toggle("complete", status === "success" || (currentIndex >= 0 && index < currentIndex));
-  });
 }
 
 function eventKind(type) {
@@ -349,7 +544,9 @@ function summarizeEvent(event) {
       .filter(Boolean).join(" · ") || event.message;
   }
   if (event.type === "model_request") return "正在根据当前屏幕决定下一步操作";
-  if (event.type === "model_response") return truncate(payload.thinking || event.message, 220);
+  if (event.type === "model_response") {
+    return truncate(payload.thinking || payload.raw_content || event.message, 220);
+  }
   if (event.type === "action") return payload.action ? JSON.stringify(payload.action) : event.message;
   if (event.type === "execution") return event.message || (payload.command_success ? "操作命令执行成功" : "操作命令执行失败");
   if (event.type === "verification") return event.message || `${payload.status || ""} · ${payload.policy || ""}`;
@@ -360,6 +557,38 @@ function summarizeEvent(event) {
 function timelineEvents(events) {
   const hiddenTypes = new Set(["metrics", "web_task_started", "web_task_finished"]);
   return events.filter((event) => !hiddenTypes.has(event.type));
+}
+
+function processEvents(events) {
+  const usefulTypes = new Set([
+    "model_response", "action", "execution", "verification", "recovery",
+    "user_prompt", "user_response", "error", "note", "finish", "web_task_error",
+    "web_task_cancel_requested",
+  ]);
+  return events.filter((event) => usefulTypes.has(event.type));
+}
+
+function latestProcessText(events, task) {
+  const latestModelResponse = [...events].reverse().find((event) => event.type === "model_response");
+  const modelContent = latestModelResponse
+    ? String(
+      latestModelResponse.payload?.thinking
+      || latestModelResponse.payload?.raw_content
+      || latestModelResponse.message
+      || "",
+    ).trim()
+    : "";
+  if (modelContent) return truncate(modelContent, 260);
+  const latest = processEvents(events).at(-1);
+  if (latest) return truncate(summarizeEvent(latest), 260);
+  return phaseLabels[task?.phase] || "正在等待模型返回第一步计划…";
+}
+
+function renderProcessNotice(events) {
+  const latestModelResponse = [...events].reverse().find((event) => event.type === "model_response");
+  const protocolError = String(latestModelResponse?.payload?.protocol_error || "").trim();
+  elements.processNotice.hidden = !protocolError;
+  elements.processNotice.textContent = protocolError ? `输出格式错误 · ${protocolError}` : "";
 }
 
 function renderTimeline(events, target, { live = false, waitingText = null } = {}) {
@@ -418,13 +647,24 @@ function renderEvents() {
   const task = appState.snapshot?.task;
   const taskId = task?.id;
   const events = appState.events.filter((event) => taskId && event.task_id === taskId);
-  const visibleCount = timelineEvents(events).length;
-  elements.eventCount.textContent = `${visibleCount} 条记录`;
+  const usefulEvents = processEvents(events);
+  elements.eventCount.textContent = `${usefulEvents.length} 条`;
+  elements.processLatest.textContent = latestProcessText(events, task);
+  renderProcessNotice(events);
+  renderUsagePanel(
+    events,
+    task?.status,
+    elements.taskUsagePanel,
+    elements.taskUsageSummary,
+    elements.taskUsageChart,
+    elements.taskUsageNote,
+  );
   const nearBottom = elements.conversationScroll.scrollHeight
     - elements.conversationScroll.scrollTop
     - elements.conversationScroll.clientHeight < 180;
-  renderTimeline(events, elements.eventFeed, {
-    live: ["running", "waiting_user"].includes(task?.status),
+  if (!appState.processExpanded) return;
+  renderTimeline(usefulEvents, elements.eventFeed, {
+    live: isTaskBusy(task?.status),
   });
   if (nearBottom) requestAnimationFrame(() => {
     elements.conversationScroll.scrollTop = elements.conversationScroll.scrollHeight;
@@ -447,6 +687,7 @@ function renderPrompt(prompt) {
   elements.acceptPrompt.querySelector("span").textContent = takeover ? "我已完成，继续" : "确认并继续";
   elements.rejectPrompt.disabled = false;
   elements.acceptPrompt.disabled = false;
+  elements.stopPromptTask.disabled = false;
   elements.promptModal.hidden = false;
 }
 
@@ -459,15 +700,22 @@ async function fetchState() {
       appState.currentTaskId = snapshot.task.id;
       appState.draftMode = false;
       appState.viewingHistory = null;
+      setProcessExpanded(false);
+    }
+    if (
+      isTaskBusy(appState.lastTaskStatus)
+      && ["success", "failed", "cancelled"].includes(snapshot.task.status)
+    ) {
+      setProcessExpanded(false);
     }
     renderChecks(snapshot.startup);
     renderRuntime(snapshot);
     renderTask(snapshot.task);
-    renderPrompt(snapshot.pending_prompt);
+    renderPrompt(snapshot.task.status === "cancelling" ? null : snapshot.pending_prompt);
     renderTrajectoryList();
     elements.sessionClock.textContent = formatClock(Date.now() / 1000 - snapshot.session.started_at);
     if (appState.lastTaskStatus !== snapshot.task.status) {
-      if (["success", "failed"].includes(snapshot.task.status)) loadTrajectories();
+      if (["success", "failed", "cancelled"].includes(snapshot.task.status)) loadTrajectories();
       appState.lastTaskStatus = snapshot.task.status;
     }
   } catch (error) {
@@ -482,7 +730,7 @@ async function fetchEvents() {
     const payload = await api(`/api/events?after=${appState.eventCursor}`);
     if (payload.events?.length) {
       appState.events.push(...payload.events);
-      appState.events = appState.events.slice(-700);
+      appState.events = appState.events.slice(-2000);
       renderEvents();
     }
     appState.eventCursor = Math.max(appState.eventCursor, payload.cursor || 0);
@@ -503,10 +751,18 @@ function showOptimisticTask(task) {
   elements.conversationTitle.textContent = truncate(task, 34);
   elements.taskStatus.dataset.status = "running";
   elements.taskStatus.querySelector("span").textContent = "提交中";
-  elements.liveState.dataset.active = "true";
-  elements.executionStatusText.textContent = "正在提交任务";
-  elements.executionStatusDetail.textContent = "即将开始观察手机屏幕";
-  renderTimeline([], elements.eventFeed, { live: true, waitingText: "正在创建任务…" });
+  elements.runButton.hidden = true;
+  elements.stopButton.hidden = false;
+  elements.stopButton.disabled = true;
+  setProcessExpanded(false);
+  elements.workProcess.dataset.active = "true";
+  elements.workProcess.dataset.status = "running";
+  elements.processTitle.textContent = "正在提交任务";
+  elements.processLatest.textContent = "即将开始观察手机屏幕";
+  elements.processNotice.hidden = true;
+  elements.processNotice.textContent = "";
+  elements.eventCount.textContent = "0 条";
+  elements.taskUsagePanel.hidden = true;
 }
 
 async function submitTask(event) {
@@ -518,15 +774,36 @@ async function submitTask(event) {
   closeSidebar();
   try {
     await api("/api/tasks", { method: "POST", body: JSON.stringify({ task }) });
+    elements.stopButton.disabled = false;
     elements.taskInput.value = "";
     resizeTaskInput();
     showToast("任务已提交");
   } catch (error) {
+    elements.stopButton.hidden = true;
+    elements.runButton.hidden = false;
     showToast(error.message);
     if (!appState.snapshot?.task?.goal) {
       appState.draftMode = true;
       showWelcome();
     }
+  }
+}
+
+async function cancelTask() {
+  if (elements.stopButton.hidden) return;
+  elements.stopButton.disabled = true;
+  elements.stopPromptTask.disabled = true;
+  elements.taskStatus.dataset.status = "cancelling";
+  elements.taskStatus.querySelector("span").textContent = "正在停止";
+  elements.processTitle.textContent = "正在停止当前任务";
+  try {
+    await api("/api/tasks/cancel", { method: "POST", body: JSON.stringify({}) });
+    elements.promptModal.hidden = true;
+    showToast("已请求停止任务");
+  } catch (error) {
+    elements.stopButton.disabled = false;
+    elements.stopPromptTask.disabled = false;
+    showToast(error.message);
   }
 }
 
@@ -592,8 +869,8 @@ function renderTrajectoryList() {
   if (current?.goal && `${current.goal} ${current.id || ""}`.toLocaleLowerCase().includes(query)) {
     elements.trajectoryList.append(historyButton({
       title: current.goal,
-      meta: ["running", "waiting_user"].includes(current.status) ? "正在执行" : "当前任务",
-      success: current.status === "success" ? true : current.status === "failed" ? false : null,
+      meta: isTaskBusy(current.status) ? "正在执行" : "当前任务",
+      success: current.status === "success" ? true : (["failed", "cancelled"].includes(current.status) ? false : null),
       active: !appState.viewingHistory && !appState.draftMode,
       current: true,
       onClick: showCurrentTask,
@@ -652,6 +929,14 @@ async function openTrajectory(filename) {
       elements.trajectoryMeta.append(chip);
     });
     renderTimeline(trajectory.events || [], elements.trajectoryEvents);
+    renderUsagePanel(
+      trajectory.events || [],
+      trajectory.success ? "success" : "failed",
+      elements.trajectoryUsagePanel,
+      elements.trajectoryUsageSummary,
+      elements.trajectoryUsageChart,
+      elements.trajectoryUsageNote,
+    );
     renderTrajectoryList();
     closeSidebar();
     elements.conversationScroll.scrollTop = 0;
@@ -669,14 +954,27 @@ function showCurrentTask() {
   elements.conversationScroll.scrollTop = elements.conversationScroll.scrollHeight;
 }
 
+function setProcessExpanded(expanded) {
+  appState.processExpanded = Boolean(expanded);
+  elements.workProcessToggle.setAttribute("aria-expanded", String(appState.processExpanded));
+  elements.workProcessDetails.hidden = !appState.processExpanded;
+  if (appState.processExpanded) renderEvents();
+}
+
+function toggleProcess() {
+  setProcessExpanded(!appState.processExpanded);
+}
+
 function startNewTask() {
-  const busy = ["running", "waiting_user"].includes(appState.snapshot?.task?.status);
+  const busy = isTaskBusy(appState.snapshot?.task?.status);
   if (busy) {
     showToast("请等待当前任务结束后再新建任务");
     return;
   }
   appState.viewingHistory = null;
   appState.draftMode = true;
+  setProcessExpanded(false);
+  elements.taskUsagePanel.hidden = true;
   showWelcome();
   elements.taskStatus.dataset.status = "idle";
   elements.taskStatus.querySelector("span").textContent = "空闲";
@@ -732,11 +1030,14 @@ function resizeTaskInput() {
   elements.taskInput.style.height = `${Math.min(elements.taskInput.scrollHeight, 180)}px`;
   const task = appState.snapshot?.task;
   const ready = appState.snapshot?.startup?.status === "ready";
-  const busy = task && ["running", "waiting_user"].includes(task.status);
+  const busy = task && isTaskBusy(task.status);
   elements.runButton.disabled = !ready || busy || !elements.taskInput.value.trim();
 }
 
 elements.taskForm.addEventListener("submit", submitTask);
+elements.stopButton.addEventListener("click", cancelTask);
+elements.stopPromptTask.addEventListener("click", cancelTask);
+elements.workProcessToggle.addEventListener("click", toggleProcess);
 elements.taskInput.addEventListener("input", resizeTaskInput);
 elements.taskInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {

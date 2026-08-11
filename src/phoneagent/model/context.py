@@ -19,6 +19,7 @@ def append_observation_message(
     is_first: bool,
     strict_recovery: str | None,
     notes: list[str],
+    api_callback_available: bool = False,
 ) -> None:
     """Append one screenshot-backed user turn."""
     if is_first:
@@ -29,6 +30,7 @@ def append_observation_message(
         "current_app": observation.current_app,
         "phase": state.phase.value,
         "stagnant_observation_count": state.stagnant_observation_count,
+        "api_callback_available": api_callback_available,
     }
     sections: list[str] = []
     goal = user_prompt or state.goal
@@ -77,29 +79,40 @@ def prepare_protocol_recovery(
     return (
         f"Previous model output was unusable: {reason}.\n"
         "Do not repeat prior reasoning or enumerate applications. "
-        "Return exactly one valid action inside <answer>...</answer>. "
-        "Do not emit <think> tags or any text after </answer>.\n"
+        "End the response with exactly one valid do(...) or finish(...) call. "
+        "Do not emit XML, Markdown, extra action examples, or any text after the call.\n"
         f"{coordinate_hint}"
         "Use the current screen and user goal. Do not copy placeholder values."
     )
 
 
-def compact_for_protocol_recovery(messages: list[dict[str, Any]]) -> None:
-    """Keep the system message and most recent completed user/assistant pair."""
+def compact_for_protocol_recovery(
+    messages: list[dict[str, Any]],
+    *,
+    keep_turns: int = 3,
+) -> None:
+    """Keep the system message and up to ``keep_turns`` most recent completed user/assistant pairs.
+
+    When a model protocol error occurs, the runtime compacts the context before
+    injecting a strict-action recovery prompt, so the model has enough recent
+    visual context to recover without carrying stale history.
+    """
     if not messages:
         return
     system = messages[0] if messages[0].get("role") == "system" else None
     body = messages[1:] if system is not None else messages
-    last_pair: list[dict[str, Any]] = []
-    for index in range(len(body) - 2, -1, -1):
-        if (
-            body[index].get("role") == "user"
-            and index + 1 < len(body)
-            and body[index + 1].get("role") == "assistant"
-        ):
-            last_pair = [body[index], body[index + 1]]
-            break
-    messages[:] = ([system] if system is not None else []) + last_pair
+    pairs: list[list[dict[str, Any]]] = []
+    index = 0
+    while index + 1 < len(body):
+        first, second = body[index], body[index + 1]
+        if first.get("role") == "user" and second.get("role") == "assistant":
+            pairs.append([first, second])
+            index += 2
+        else:
+            index += 1
+    messages[:] = ([system] if system is not None else []) + [
+        msg for pair in pairs[-keep_turns:] for msg in pair
+    ]
 
 
 def build_previous_execution_info(state: Any) -> str:

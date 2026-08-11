@@ -93,6 +93,17 @@ class ConsoleRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"task": task}, status=HTTPStatus.ACCEPTED)
             return
 
+        if parsed.path == "/api/tasks/cancel":
+            try:
+                task = self.server.runtime.cancel_task()
+            except ValueError as exc:
+                self._send_error_json(HTTPStatus.CONFLICT, str(exc))
+            except RuntimeError as exc:
+                self._send_error_json(HTTPStatus.NOT_IMPLEMENTED, str(exc))
+            else:
+                self._send_json({"task": task}, status=HTTPStatus.ACCEPTED)
+            return
+
         if parsed.path == "/api/checks":
             if self.server.runtime.start_checks():
                 self._send_json({"status": "checking"}, status=HTTPStatus.ACCEPTED)
@@ -206,13 +217,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="PhoneAgent local Web Console")
     parser.add_argument(
         "--host",
-        default=os.getenv("PHONE_AGENT_WEB_HOST", "127.0.0.1"),
+        default=os.getenv("WEB_HOST", "127.0.0.1"),
         help="Bind address; keep 127.0.0.1 unless you add your own authentication",
     )
     parser.add_argument(
         "--port",
         type=int,
-        default=int(os.getenv("PHONE_AGENT_WEB_PORT", "8765")),
+        default=int(os.getenv("WEB_PORT", "8765")),
     )
     parser.add_argument(
         "--open-browser",

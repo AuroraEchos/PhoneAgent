@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import copy
 import json
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from phoneagent import AgentConfig, PhoneAgent
-from phoneagent.devices import AppLaunchResult
+from phoneagent.devices import AppLaunchResult, SystemPanelCommandResult
 from phoneagent.model import ModelResponse
 from phoneagent.runtime import RecoveryConfig, VerificationConfig
 
@@ -70,6 +71,39 @@ class FakeModelClient:
         return self.responses.pop(0)
 
 
+class BlockingModelClient:
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def request(self, messages, print_stream=False) -> ModelResponse:
+        del messages, print_stream
+        self.entered.set()
+        if not self.release.wait(timeout=2):
+            raise TimeoutError("test model was not released")
+        return ModelResponse(
+            thinking="tap",
+            action='do(action="Tap", element=[500, 500])',
+            raw_content='do(action="Tap", element=[500, 500])',
+        )
+
+
+class BlockingAsyncModelClient:
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.cancelled = threading.Event()
+
+    async def request(self, messages, print_stream=False, cancel_event=None) -> ModelResponse:
+        del messages, print_stream, cancel_event
+        import asyncio
+
+        self.entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            self.cancelled.set()
+
+
 class LazyLaunchDevice(FakeDevice):
     def __init__(self) -> None:
         super().__init__()
@@ -94,6 +128,62 @@ class LazyLaunchDevice(FakeDevice):
         )
 
 
+class UninstalledLaunchDevice(LazyLaunchDevice):
+    def launch_app_resolved(self, query: str) -> AppLaunchResult:
+        self.launch_calls.append(query)
+        return AppLaunchResult(
+            query=query,
+            success=False,
+            message="not installed",
+            package_name="com.tencent.mm",
+            display_name="微信",
+            error_code="app_not_installed",
+        )
+
+
+class PanelFallbackDevice(FakeDevice):
+    def __init__(self) -> None:
+        super().__init__()
+        self.panel_visible = False
+        self.primary_calls = 0
+        self.fallback_calls = 0
+
+    def observe(self):
+        observation = make_observation(
+            self.screen_value,
+            app=(
+                "Unknown (com.android.systemui)" if self.panel_visible else "Example"
+            ),
+            package="com.android.systemui" if self.panel_visible else "com.example",
+        )
+        observation.system_panel_visible = self.panel_visible
+        observation.system_panel_name = "notificationshade"
+        return observation
+
+    def open_quick_settings(self) -> SystemPanelCommandResult:
+        self.primary_calls += 1
+        return SystemPanelCommandResult(
+            target="quick_settings",
+            command="expand-settings",
+            success=True,
+            returncode=0,
+            message="accepted but ignored by OEM",
+        )
+
+    def open_system_panel_gesture(self, action_name, width, height):
+        self.fallback_calls += 1
+        self.panel_visible = True
+        self.screen_value = 80
+        return {
+            "target": "quick_settings",
+            "transport": "gesture",
+            "fallback_used": True,
+            "edge": "top_right",
+            "start": [width - 1, 1],
+            "end": [width - 1, height - 1],
+        }
+
+
 def test_agent_loop_reuses_verified_observation_and_finishes(tmp_path) -> None:
     device = FakeDevice()
     model = FakeModelClient(
@@ -101,12 +191,12 @@ def test_agent_loop_reuses_verified_observation_and_finishes(tmp_path) -> None:
             ModelResponse(
                 thinking="tap",
                 action='do(action="Tap", element=[500, 500])',
-                raw_content='<answer>do(action="Tap", element=[500, 500])</answer>',
+                raw_content='do(action="Tap", element=[500, 500])',
             ),
             ModelResponse(
                 thinking="done",
                 action='finish(message="done", success=True)',
-                raw_content='<answer>finish(message="done", success=True)</answer>',
+                raw_content='finish(message="done", success=True)',
             ),
         ]
     )
@@ -140,19 +230,122 @@ def test_agent_loop_reuses_verified_observation_and_finishes(tmp_path) -> None:
     assert verification["semantic_effect_verified"] is None
 
 
-def test_compound_task_launches_after_model_action(tmp_path) -> None:
+def test_quick_settings_falls_back_inside_runtime_after_no_ui_effect(tmp_path) -> None:
+    device = PanelFallbackDevice()
+    model = FakeModelClient(
+        [
+            ModelResponse(
+                thinking="open quick settings",
+                action='do(action="OpenQuickSettings")',
+                raw_content='do(action="OpenQuickSettings")',
+            )
+        ]
+    )
+    agent = PhoneAgent(
+        agent_config=AgentConfig(
+            max_steps=2,
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+            verification=VerificationConfig(settle_delay_seconds=0, observation_retries=0),
+            recovery=RecoveryConfig(retry_delay_seconds=0),
+        ),
+        device=device,  # type: ignore[arg-type]
+        model_client=model,
+    )
+
+    result = agent.step("打开控制中心")
+
+    assert result.success is True
+    assert result.command_success is True
+    assert result.verification is not None
+    assert result.verification["semantic_effect_verified"] is True
+    assert device.primary_calls == 1
+    assert device.fallback_calls == 1
+    execution_events = [
+        event for event in agent.trajectory.events if event["type"] == "execution"
+    ]
+    assert len(execution_events) == 2
+    assert execution_events[-1]["payload"]["metadata"]["internal_fallback"] is True
+
+
+def test_agent_cooperatively_cancels_after_blocking_model_returns(tmp_path) -> None:
+    device = FakeDevice()
+    model = BlockingModelClient()
+    agent = PhoneAgent(
+        agent_config=AgentConfig(
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+            verification=VerificationConfig(settle_delay_seconds=0, observation_retries=0),
+        ),
+        device=device,
+        model_client=model,
+    )
+    result: list[str] = []
+    thread = threading.Thread(target=lambda: result.append(agent.run("tap the target")))
+    thread.start()
+    assert model.entered.wait(timeout=2)
+
+    assert agent.request_cancel("cancelled from test") is True
+    model.release.set()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert result == ["cancelled from test"]
+    assert agent.state.phase.value == "cancelled"
+    assert agent.state.success is False
+    assert device.taps == []
+    finish_event = next(event for event in agent.trajectory.events if event["type"] == "finish")
+    assert finish_event["payload"]["error_code"] == "cancelled"
+
+
+def test_agent_cancels_native_async_model_request_immediately(tmp_path) -> None:
+    device = FakeDevice()
+    model = BlockingAsyncModelClient()
+    agent = PhoneAgent(
+        agent_config=AgentConfig(
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+            verification=VerificationConfig(settle_delay_seconds=0, observation_retries=0),
+        ),
+        device=device,
+        model_client=FakeModelClient([]),
+        async_model_client=model,  # type: ignore[arg-type]
+    )
+    result: list[str] = []
+    thread = threading.Thread(target=lambda: result.append(agent.run("tap the target")))
+    thread.start()
+    assert model.entered.wait(timeout=1)
+
+    assert agent.request_cancel("cancelled during stream") is True
+    thread.join(timeout=1)
+
+    assert not thread.is_alive()
+    assert model.cancelled.is_set()
+    assert result == ["cancelled during stream"]
+    assert agent.state.phase.value == "cancelled"
+
+
+def test_coordinate_signature_only_tracks_coordinate_actions() -> None:
+    first_tap = PhoneAgent._action_coordinate_signature(
+        {"action": "Tap", "element": [250, 126], "description": "first"}
+    )
+    second_tap = PhoneAgent._action_coordinate_signature(
+        {"action": "Tap", "element": [250.0, 126.0], "description": "second"}
+    )
+
+    assert first_tap == second_tap
+    assert PhoneAgent._action_coordinate_signature({"action": "Type", "text": "北京"}) == ""
+    assert PhoneAgent._action_coordinate_signature({"action": "Launch", "app": "微信"}) == ""
+
+
+def test_compound_task_launches_before_first_model_action(tmp_path) -> None:
     device = LazyLaunchDevice()
     model = FakeModelClient(
         [
             ModelResponse(
-                thinking="open WeChat",
-                action='do(action="Launch", app="微信")',
-                raw_content='<answer>do(action="Launch", app="微信")</answer>',
-            ),
-            ModelResponse(
                 thinking="done",
                 action='finish(message="done", success=True)',
-                raw_content='<answer>finish(message="done", success=True)</answer>',
+                raw_content='finish(message="done", success=True)',
             ),
         ]
     )
@@ -177,21 +370,20 @@ def test_compound_task_launches_after_model_action(tmp_path) -> None:
     action_events = [event for event in agent.trajectory.events if event["type"] == "action"]
     assert action_events[0]["payload"]["action"]["action"] == "Launch"
     assert action_events[0]["payload"]["action"]["app"] == "微信"
+    assert action_events[0]["payload"]["source"] == "runtime_initial_launch"
+    assert not any(
+        event["type"] == "model_request" and event["step"] == 1 for event in agent.trajectory.events
+    )
 
 
-def test_open_only_task_uses_model_then_finishes_on_verified_screen(tmp_path) -> None:
+def test_open_only_task_skips_model_for_initial_launch(tmp_path) -> None:
     device = LazyLaunchDevice()
     model = FakeModelClient(
         [
             ModelResponse(
-                thinking="open WeChat",
-                action='do(action="Launch", app="微信")',
-                raw_content='<answer>do(action="Launch", app="微信")</answer>',
-            ),
-            ModelResponse(
                 thinking="done",
                 action='finish(message="done", success=True)',
-                raw_content='<answer>finish(message="done", success=True)</answer>',
+                raw_content='finish(message="done", success=True)',
             ),
         ]
     )
@@ -210,5 +402,67 @@ def test_open_only_task_uses_model_then_finishes_on_verified_screen(tmp_path) ->
 
     assert message == "done"
     assert device.launch_calls == ["微信"]
-    assert len(model.requests) == 2
+    assert len(model.requests) == 1
     assert agent.step_count == 2
+
+
+def test_initial_launch_is_skipped_when_target_is_already_foreground(tmp_path) -> None:
+    device = LazyLaunchDevice()
+    device.launched = True
+    model = FakeModelClient(
+        [
+            ModelResponse(
+                thinking="already open",
+                action='finish(message="done", success=True)',
+                raw_content='finish(message="done", success=True)',
+            )
+        ]
+    )
+    agent = PhoneAgent(
+        agent_config=AgentConfig(
+            max_steps=1,
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+            verification=VerificationConfig(settle_delay_seconds=0, observation_retries=0),
+        ),
+        device=device,  # type: ignore[arg-type]
+        model_client=model,
+    )
+
+    assert agent.run("打开微信") == "done"
+    assert device.launch_calls == []
+    assert len(model.requests) == 1
+
+
+def test_failed_initial_launch_returns_control_to_model(tmp_path) -> None:
+    device = UninstalledLaunchDevice()
+    model = FakeModelClient(
+        [
+            ModelResponse(
+                thinking="use a visible fallback",
+                action='finish(message="fallback considered", success=False)',
+                raw_content='finish(message="fallback considered", success=False)',
+            )
+        ]
+    )
+    agent = PhoneAgent(
+        agent_config=AgentConfig(
+            max_steps=2,
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+            verification=VerificationConfig(settle_delay_seconds=0, observation_retries=0),
+            recovery=RecoveryConfig(retry_delay_seconds=0),
+        ),
+        device=device,  # type: ignore[arg-type]
+        model_client=model,
+    )
+
+    first = agent.step("打开微信")
+    second = agent.step()
+
+    assert first.error_code == "app_not_installed"
+    assert first.finished is False
+    assert second.message == "fallback considered"
+    assert device.launch_calls == ["微信"]
+    assert len(model.requests) == 1
+    assert "app_not_installed" in str(model.requests[0])

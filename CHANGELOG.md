@@ -6,12 +6,64 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-08-11
+
+### Added
+
+- Native asynchronous agent and OpenAI-compatible model entry points, with cooperative task
+  cancellation across model streams, bounded waits, verification, recovery, and the Web Console.
+- Entry-app-first deterministic launch for explicitly requested applications after the first
+  trusted observation, without introducing startup application scans or catalog caching.
+- Semantic notification, Quick Settings, and system-panel actions backed by allowlisted
+  `cmd statusbar` commands, WindowManager visibility evidence, and an internal edge-gesture
+  fallback for panel opening.
+- Per-request model usage, latency, and optional estimated-cost summaries in live and saved Web
+  Console task views.
+- A 90-template Chinese Android task set for manual research and evaluation runs.
+
+### Changed
+
+- Replaced the terminal XML action envelope with one complete `do(...)` or `finish(...)` call at
+  the end of the response; preceding text is inert reasoning, while multiple, trailing,
+  malformed, fenced, or truncated action output is rejected.
+- Refactored model clients behind a common interface, added a native async client, made streaming
+  usage collection provider-tolerant, and preserved timing and truncation evidence on errors.
+- Strengthened screenshot capture with bounded retries, typed failures, format validation,
+  resizing, resolution caching, and explicit fallback metadata.
+- Based stagnation detection on an application-content fingerprint that excludes ordinary system
+  chrome, and restricted repeated-coordinate protection to actions that contain coordinates.
+- Consolidated task lifecycle ownership in `AgentState`, preserving the trajectory event stream
+  as the authoritative execution history.
+- Renamed runtime environment variables from `PHONE_AGENT_*` to concise names such as
+  `BASE_URL`, `MODEL`, `API_KEY`, `MAX_STEPS`, and `WEB_HOST`; `.env.example` and all current
+  documentation use the same contract.
+- Reworked the CLI into explicit configuration, device-command, preflight, execution, and exit
+  code boundaries while retaining its public integration helpers.
+- Simplified the test layout by folding narrow implementation tests into existing behavioral
+  suites and retaining a separate model-client suite only for transport-specific behavior.
+
+### Fixed
+
+- Prevented successful standalone device commands from falling through into model configuration
+  and agent startup when their exit code is `0`.
+- Restored public CLI preflight helpers required by the Web Console after the CLI refactor.
+- Prevented status-bar-only animation from satisfying ordinary page-change verification, and
+  required panel visibility evidence for system-panel semantics.
+- Reset consecutive failure accounting after a successful recovery so replanning receives the
+  intended failure budget.
+
 ### Removed
 
 - The legacy root `main.py` source-checkout wrapper; local development now uses the installed
   `phoneagent` CLI entry point from `pyproject.toml`.
 - The legacy `MANIFEST.in`; setuptools package discovery and package data are defined entirely in
   `pyproject.toml`.
+
+### Compatibility
+
+- The `phoneagent` and `phoneagent-web` entry points remain available.
+- `ModelClient` remains an alias for the synchronous OpenAI-compatible implementation.
+- Trajectory schema version remains `1.0`.
 
 ## [0.1.3] - 2026-07-31
 

@@ -7,10 +7,8 @@ from phoneagent.model import ModelClient, ModelProtocolError, ModelResponse, Mod
 
 
 class ActionProtocolTests(unittest.TestCase):
-    def test_canonical_answer_envelope(self) -> None:
-        thinking, action_text = ModelResponseParser.parse(
-            '<answer>do(action="Tap", element=[500, 300])</answer>'
-        )
+    def test_canonical_terminal_action(self) -> None:
+        thinking, action_text = ModelResponseParser.parse('do(action="Tap", element=[500, 300])')
         action = parse_action(action_text)
         self.assertEqual(thinking, "")
         self.assertEqual(action["action"], "Tap")
@@ -55,8 +53,7 @@ class ActionProtocolTests(unittest.TestCase):
 
     def test_normalizes_provider_swipe_points_and_coordinate_objects(self) -> None:
         swipe = parse_action(
-            'do(action="Swipe", start=[<point>500 800</point>], '
-            'end=[<point>500 200</point>])'
+            'do(action="Swipe", start=[<point>500 800</point>], end=[<point>500 200</point>])'
         )
         self.assertEqual(swipe["start"], [500, 800])
         self.assertEqual(swipe["end"], [500, 200])
@@ -77,55 +74,49 @@ class ActionProtocolTests(unittest.TestCase):
                 parse_action(sample)
 
     def test_provider_marker_text_inside_string_is_not_rewritten(self) -> None:
-        action = parse_action(
-            'do(action="Type", text="保留 element=<point>10 20</point> 原文")'
-        )
+        action = parse_action('do(action="Type", text="保留 element=<point>10 20</point> 原文")')
         self.assertEqual(action["text"], "保留 element=<point>10 20</point> 原文")
 
-    def test_model_parser_uses_terminal_answer_protocol(self) -> None:
-        thinking, action = ModelResponseParser.parse(
-            '<answer>do(action="Back")</answer>'
-        )
+    def test_model_parser_uses_terminal_action_protocol(self) -> None:
+        thinking, action = ModelResponseParser.parse('do(action="Back")')
         self.assertEqual(thinking, "")
         self.assertEqual(action, 'do(action="Back")')
 
         thinking, action = ModelResponseParser.parse(
             "用户要求打开设置，找到无线网络界面。\n\n"
             "我应该使用 Launch 功能来打开设置应用。\n"
-            '<answer>do(action="Launch", app="设置")</answer>'
+            'do(action="Launch", app="设置")'
         )
         self.assertEqual(
             thinking,
-            "用户要求打开设置，找到无线网络界面。\n\n"
-            "我应该使用 Launch 功能来打开设置应用。",
+            "用户要求打开设置，找到无线网络界面。\n\n我应该使用 Launch 功能来打开设置应用。",
         )
         self.assertEqual(action, 'do(action="Launch", app="设置")')
         self.assertEqual(parse_action(action)["action"], "Launch")
 
         thinking, action = ModelResponseParser.parse(
-            '当前页面不是订单页面，需要返回。</think>\n'
-            '<answer>do(action="Back")</answer>'
+            '当前页面不是订单页面，需要返回。</think>\ndo(action="Back")'
         )
         self.assertEqual(thinking, "当前页面不是订单页面，需要返回。</think>")
         self.assertEqual(action, 'do(action="Back")')
 
         thinking, action = ModelResponseParser.parse(
-            '不要执行示例 do(action="Home")；应返回上一页。\n'
-            '<answer>do(action="Back")</answer>'
+            '当前页面展示了文本“undo(操作)”，需要返回上一页。\ndo(action="Back")'
         )
-        self.assertIn('do(action="Home")', thinking)
+        self.assertIn("undo(操作)", thinking)
         self.assertEqual(parse_action(action)["action"], "Back")
 
-    def test_model_parser_requires_one_terminal_answer_block(self) -> None:
+    def test_model_parser_requires_one_terminal_action_call(self) -> None:
         invalid_samples = (
-            'do(action="Back")',
-            '先返回上一页 do(action="Back")',
-            '<answer>do(action="Back")',
-            'do(action="Back")</answer>',
-            '<answer></answer>',
-            '<answer>do(action="Back")</answer> trailing',
-            '<answer>do(action="Back")</answer><answer>do(action="Home")</answer>',
-            '```xml\n<answer>do(action="Back")</answer>\n```',
+            '<action>do(action="Back")',
+            'do(action="Back")</action>',
+            "<action></action>",
+            'do(action="Back") trailing',
+            'do(action="Back")\ndo(action="Home")',
+            '先考虑 do(action="Home")，最终返回。\ndo(action="Back")',
+            '```python\ndo(action="Back")\n```',
+            '<answer>do(action="Back")</answer>',
+            'do(action="Back"',
         )
         for sample in invalid_samples:
             with self.subTest(sample=sample), self.assertRaises(ModelProtocolError):
@@ -133,44 +124,44 @@ class ActionProtocolTests(unittest.TestCase):
 
     def test_action_parser_only_accepts_extracted_action_text(self) -> None:
         with self.assertRaises(ActionParseError):
-            parse_action('<answer>do(action="Back")</answer>')
+            parse_action('<action>do(action="Back")</action>')
 
-    def test_assistant_history_serializes_only_the_answer(self) -> None:
+    def test_assistant_history_serializes_only_the_action(self) -> None:
         response = ModelResponse(
             thinking="不会回填到模型上下文",
             action='do(action="Back")',
-            raw_content='分析内容<answer>do(action="Back")</answer>',
+            raw_content='分析内容\ndo(action="Back")',
         )
         self.assertEqual(
             response.to_assistant_message_content(),
-            '<answer>do(action="Back")</answer>',
+            'do(action="Back")',
         )
 
-    def test_malformed_answer_protocol_is_rejected(self) -> None:
+    def test_malformed_action_protocol_is_rejected(self) -> None:
         with self.assertRaises(ModelProtocolError):
             ModelResponseParser.parse('```json\n{"action":"Back"}\n```')
         with self.assertRaises(ModelProtocolError):
             ModelResponseParser.parse("")
 
-    def test_answer_still_rejects_extra_or_incomplete_actions(self) -> None:
-        _, multiple = ModelResponseParser.parse(
-            '<answer>do(action="Back") do(action="Home")</answer>'
+    def test_terminal_protocol_handles_nested_call_text_safely(self) -> None:
+        thinking, action = ModelResponseParser.parse(
+            '输入一段包含函数名称的文本。\ndo(action="Type", text="保留 finish(example) 原文")'
         )
-        with self.assertRaises(ActionParseError):
-            parse_action(multiple)
+        self.assertEqual(thinking, "输入一段包含函数名称的文本。")
+        self.assertEqual(parse_action(action)["text"], "保留 finish(example) 原文")
 
-        _, trailing = ModelResponseParser.parse(
-            '<answer>do(action="Back") 然后继续</answer>'
+    def test_terminal_protocol_rejects_extra_or_incomplete_actions(self) -> None:
+        invalid_samples = (
+            'do(action="Back") do(action="Home")',
+            'do(action="Back") 然后继续',
+            'do(action="Back"',
         )
-        with self.assertRaises(ActionParseError):
-            parse_action(trailing)
-
-        _, incomplete = ModelResponseParser.parse('<answer>do(action="Back"</answer>')
-        with self.assertRaises(ActionParseError):
-            parse_action(incomplete)
+        for sample in invalid_samples:
+            with self.subTest(sample=sample), self.assertRaises(ModelProtocolError):
+                ModelResponseParser.parse(sample)
 
     def test_protocol_errors_are_not_retried_as_transport_failures(self) -> None:
-        self.assertFalse(ModelClient._is_retryable(ModelProtocolError("invalid envelope")))
+        self.assertFalse(ModelClient._is_retryable(ModelProtocolError("invalid action")))
 
 
 if __name__ == "__main__":

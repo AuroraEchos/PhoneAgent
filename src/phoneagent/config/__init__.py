@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from phoneagent.config.apps import APP_PACKAGES
+from phoneagent.config.apps import APP_PACKAGES, TaskEntryApp, infer_task_entry_app
 from phoneagent.config.env import load_env
 from phoneagent.config.messages import get_message, get_messages
 from phoneagent.config.prompts_zh import SYSTEM_PROMPT as SYSTEM_PROMPT_ZH, build_system_prompt
@@ -19,6 +19,8 @@ SYSTEM_PROMPT = SYSTEM_PROMPT_ZH
 
 __all__ = [
     "APP_PACKAGES",
+    "TaskEntryApp",
+    "infer_task_entry_app",
     "load_env",
     "SYSTEM_PROMPT",
     "SYSTEM_PROMPT_ZH",

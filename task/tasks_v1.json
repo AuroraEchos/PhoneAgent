@@ -1,0 +1,362 @@
+[
+  {
+    "instruction_zh": "打开手机的 Wi-Fi。",
+    "domain": "设备与系统"
+  },
+  {
+    "instruction_zh": "关闭手机的 Wi-Fi。",
+    "domain": "设备与系统"
+  },
+  {
+    "instruction_zh": "打开手机的蓝牙。",
+    "domain": "设备与系统"
+  },
+  {
+    "instruction_zh": "关闭手机的蓝牙。",
+    "domain": "设备与系统"
+  },
+  {
+    "instruction_zh": "关闭自动亮度，并把屏幕亮度调到大约 40%。",
+    "domain": "设备与系统"
+  },
+  {
+    "instruction_zh": "把手机切换到深色模式。",
+    "domain": "设备与系统"
+  },
+  {
+    "instruction_zh": "打开“{target_app_name}”的应用权限页面，不要修改任何权限。",
+    "domain": "设备与系统"
+  },
+  {
+    "instruction_zh": "打开手机的存储空间页面，并回答当前已用空间显示的数值。",
+    "domain": "设备与系统"
+  },
+  {
+    "instruction_zh": "打开“{target_app_name}”的通知管理页面，不要改变任何开关。",
+    "domain": "设备与系统"
+  },
+  {
+    "instruction_zh": "打开电池使用情况页面，回答页面上耗电最多的应用名称。",
+    "domain": "设备与系统"
+  },
+  {
+    "instruction_zh": "打开无障碍设置页面并停留在那里，不要启用任何服务。",
+    "domain": "设备与系统"
+  },
+  {
+    "instruction_zh": "在系统设置中找到设备名称，并把名称作为最终答案返回。",
+    "domain": "设备与系统"
+  },
+  {
+    "instruction_zh": "新建联系人“{name}”，手机号为 {phone}，备注填写“{note}”，然后保存。",
+    "domain": "个人信息管理"
+  },
+  {
+    "instruction_zh": "进入新建联系人页面，姓名填写“{name}”，手机号填写 {phone}，但不要保存。",
+    "domain": "个人信息管理"
+  },
+  {
+    "instruction_zh": "在联系人中找到“{name}”，并回答他的手机号。",
+    "domain": "个人信息管理"
+  },
+  {
+    "instruction_zh": "把联系人“{name}”的备注改为“{new_note}”，其他字段不要修改。",
+    "domain": "个人信息管理"
+  },
+  {
+    "instruction_zh": "在日历中创建{event_date_display} {event_time}的日程“{title}”，持续 {duration} 分钟。",
+    "domain": "个人信息管理"
+  },
+  {
+    "instruction_zh": "从{event_date_display} {event_time}开始，创建每周重复的“{title}”，共重复 4 次，每次 {duration} 分钟。",
+    "domain": "个人信息管理"
+  },
+  {
+    "instruction_zh": "查看{date_display}的日程，把所有日程标题按时间顺序用中文顿号连接后回答。",
+    "domain": "个人信息管理"
+  },
+  {
+    "instruction_zh": "设置一个 {alarm_time} 的闹钟，标签为“{label}”，但不要开启重复。",
+    "domain": "个人信息管理"
+  },
+  {
+    "instruction_zh": "在计时器中输入 {minutes} 分钟，但不要开始计时。",
+    "domain": "个人信息管理"
+  },
+  {
+    "instruction_zh": "打开秒表，开始计时，至少运行 {minimum_seconds} 秒后暂停。",
+    "domain": "个人信息管理"
+  },
+  {
+    "instruction_zh": "新建待办“{title}”，截止时间设为{date_display}，优先级设为高。",
+    "domain": "个人信息管理"
+  },
+  {
+    "instruction_zh": "找出所有逾期且未完成的待办，把标题用中文顿号连接后回答。",
+    "domain": "个人信息管理"
+  },
+  {
+    "instruction_zh": "在文件管理应用中新建一个名为“资料库”的文件夹。",
+    "domain": "文件与媒体"
+  },
+  {
+    "instruction_zh": "打开相机拍摄一张照片，然后停留在预览界面。",
+    "domain": "文件与媒体"
+  },
+  {
+    "instruction_zh": "录制一段至少 {minimum_seconds} 秒的音频，保存为“语音便签”。",
+    "domain": "文件与媒体"
+  },
+  {
+    "instruction_zh": "在相册中新建一个名为“旅途”的相册。",
+    "domain": "文件与媒体"
+  },
+  {
+    "instruction_zh": "在相册中，将最近拍摄的一张照片移动到“旅途”相册。",
+    "domain": "文件与媒体"
+  },
+  {
+    "instruction_zh": "在相册中，打开最近的一张照片，然后返回。",
+    "domain": "文件与媒体"
+  },
+  {
+    "instruction_zh": "选择一张照片，通过分享面板发送到微信的“文件传输助手”（停留在发送前，不要发送）。",
+    "domain": "文件与媒体"
+  },
+  {
+    "instruction_zh": "在文件管理中，查看“下载”目录，并回答其中文件的总数。",
+    "domain": "文件与媒体"
+  },
+  {
+    "instruction_zh": "在相册中，选择一张照片，将其设置为壁纸（停留在预览，不要确认）。",
+    "domain": "文件与媒体"
+  },
+  {
+    "instruction_zh": "打开录音应用，播放最新的一条录音，然后暂停。",
+    "domain": "文件与媒体"
+  },
+  {
+    "instruction_zh": "给号码 {phone} 编辑短信“{message}”，停留在发送前，不要发送。",
+    "domain": "通信与社交"
+  },
+  {
+    "instruction_zh": "在拨号盘输入号码 {phone}，但不要拨出。",
+    "domain": "通信与社交"
+  },
+  {
+    "instruction_zh": "在“{app_name}”中找到联系人“{contact_name}”，进入聊天页面，但不要发送消息。",
+    "domain": "通信与社交"
+  },
+  {
+    "instruction_zh": "在聊天应用中找到“{contact_name}”，输入“{message}”，停留在发送前，不要发送。",
+    "domain": "通信与社交"
+  },
+  {
+    "instruction_zh": "在群聊“{group_name}”中找到包含“{keyword}”的消息，并把该消息发送者的昵称作为答案。",
+    "domain": "通信与社交"
+  },
+  {
+    "instruction_zh": "新建邮件草稿，收件人为 {recipient}，主题为“{subject}”，正文为“{body}”，不要发送。",
+    "domain": "通信与社交"
+  },
+  {
+    "instruction_zh": "新建一封发给 {recipient} 的邮件，主题为“{subject}”，添加附件“会议材料.txt”（假设该文件存在于下载目录），不要发送。",
+    "domain": "通信与社交"
+  },
+  {
+    "instruction_zh": "下拉通知栏，查看所有通知，并回答未读通知的数量。",
+    "domain": "通信与社交"
+  },
+  {
+    "instruction_zh": "在微信中打开“扫一扫”页面，但不要扫描或上传任何图片。",
+    "domain": "通信与社交"
+  },
+  {
+    "instruction_zh": "在微信中搜索小程序“{mini_program}”，打开搜索结果页，但不要授权登录。",
+    "domain": "通信与社交"
+  },
+  {
+    "instruction_zh": "在地图应用中搜索“{place}”，打开地点详情页。",
+    "domain": "出行与本地生活"
+  },
+  {
+    "instruction_zh": "在地图中规划从“{origin}”到“{destination}”的公交路线，停留在路线选择页，不要开始导航。",
+    "domain": "出行与本地生活"
+  },
+  {
+    "instruction_zh": "在地图中查找当前位置附近的医院，回答距离最近的医院名称。",
+    "domain": "出行与本地生活"
+  },
+  {
+    "instruction_zh": "在打车应用中把目的地设为“{destination}”，选择“快车”，停留在呼叫车辆前，不要下单。",
+    "domain": "出行与本地生活"
+  },
+  {
+    "instruction_zh": "查询{date_display}从“{origin}”到“{destination}”的高铁票，回答最早一班的出发时间，不要登录或下单。",
+    "domain": "出行与本地生活"
+  },
+  {
+    "instruction_zh": "在外卖应用中搜索“{keyword}”，筛选评分不低于 {rating} 分的店铺，回答结果中的第一家店名，不要加入购物车。",
+    "domain": "出行与本地生活"
+  },
+  {
+    "instruction_zh": "在测试店铺中把“{item}”加入购物车，数量改为 {quantity}，停留在提交订单前，不要下单。",
+    "domain": "出行与本地生活"
+  },
+  {
+    "instruction_zh": "在快递查询应用中查询单号 {tracking_no}，回答最新物流状态。",
+    "domain": "出行与本地生活"
+  },
+  {
+    "instruction_zh": "在天气应用中查看“{city}”{date_display}的天气，回答最高温和最低温。",
+    "domain": "出行与本地生活"
+  },
+  {
+    "instruction_zh": "在地图或本地生活应用中查找附近仍在营业的药店，回答距离最近的一家名称，不要拨号或导航。",
+    "domain": "出行与本地生活"
+  },
+  {
+    "instruction_zh": "在购物应用中搜索“{keyword}”，筛选价格在 {min_price} 到 {max_price} 元之间，并按销量从高到低排序。",
+    "domain": "购物与消费"
+  },
+  {
+    "instruction_zh": "在购物应用中分别查看“{product_a}”和“{product_b}”，回答哪一个标注的重量更轻。",
+    "domain": "购物与消费"
+  },
+  {
+    "instruction_zh": "把测试商品“{product}”加入购物车，选择“{variant}”，数量设为 {quantity}，不要结算。",
+    "domain": "购物与消费"
+  },
+  {
+    "instruction_zh": "新增一笔{category}支出，金额 {amount} 元，备注“{note}”，日期为{date_display}。",
+    "domain": "购物与消费"
+  },
+  {
+    "instruction_zh": "查看本月“交通”分类的总支出，并把金额作为答案。",
+    "domain": "购物与消费"
+  },
+  {
+    "instruction_zh": "在支付应用中打开“扫一扫”入口，停留在扫码页面，不要扫描、付款或授权。",
+    "domain": "购物与消费"
+  },
+  {
+    "instruction_zh": "在支付测试账户中进入转账页面，收款方填写“{recipient}”，金额填写 {amount} 元，停留在确认付款前，不要输入密码或付款。",
+    "domain": "购物与消费"
+  },
+  {
+    "instruction_zh": "在测试账户中找到{date_display}仍有效且满 {threshold} 元可用的优惠券，回答面额最大的那一张。",
+    "domain": "购物与消费"
+  },
+  {
+    "instruction_zh": "打开浏览器，搜索“{query}”，停留在搜索结果页。",
+    "domain": "工作与学习"
+  },
+  {
+    "instruction_zh": "在浏览器中新建两个标签页，分别搜索“{query1}”和“{query2}”，最后停留在“{query2}”的结果页。",
+    "domain": "工作与学习"
+  },
+  {
+    "instruction_zh": "打开测试网页“{page_title}”，把它加入书签，书签名称改为“{bookmark_name}”。",
+    "domain": "工作与学习"
+  },
+  {
+    "instruction_zh": "新建笔记，标题为“{title}”，正文按顺序写入：{items_joined}。",
+    "domain": "工作与学习"
+  },
+  {
+    "instruction_zh": "在笔记中找到包含“{keyword}”的笔记，把笔记标题作为答案。",
+    "domain": "工作与学习"
+  },
+  {
+    "instruction_zh": "新建清单“{title}”，添加 {items_joined}，并只勾选“{checked_item}”。",
+    "domain": "工作与学习"
+  },
+  {
+    "instruction_zh": "在浏览器中打开百度，搜索“人工智能”并停留在搜索结果页。",
+    "domain": "工作与学习"
+  },
+  {
+    "instruction_zh": "在翻译应用中把“{source_text}”翻译成英文，并把译文作为答案。",
+    "domain": "工作与学习"
+  },
+  {
+    "instruction_zh": "用计算器计算 ({a} + {b}) × {c}，并把结果作为答案。",
+    "domain": "工作与学习"
+  },
+  {
+    "instruction_zh": "在笔记应用中新建一个笔记，标题为“想法”，正文写入“今天天气很好”。",
+    "domain": "工作与学习"
+  },
+  {
+    "instruction_zh": "在音乐应用中搜索“{song}”，播放测试版本，并在播放后暂停。",
+    "domain": "内容与娱乐"
+  },
+  {
+    "instruction_zh": "新建歌单“{playlist}”，按顺序加入：{songs_joined}。",
+    "domain": "内容与娱乐"
+  },
+  {
+    "instruction_zh": "搜索视频“{video}”，播放后把进度拖到大约 {progress_percent}%，然后暂停。",
+    "domain": "内容与娱乐"
+  },
+  {
+    "instruction_zh": "在短视频应用中搜索用户“{creator}”，打开他的主页，但不要关注、点赞或评论。",
+    "domain": "内容与娱乐"
+  },
+  {
+    "instruction_zh": "在播客应用中找到标题包含“{keyword}”的单集，回答它的时长。",
+    "domain": "内容与娱乐"
+  },
+  {
+    "instruction_zh": "打开相册“旅途”，开始幻灯片播放，播放两张后停止。",
+    "domain": "内容与娱乐"
+  },
+  {
+    "instruction_zh": "在健康应用中查看{date_display}的步数，并把数字作为答案。",
+    "domain": "健康与生活"
+  },
+  {
+    "instruction_zh": "新建一条{workout}记录，时长 {duration} 分钟，距离 {distance} 公里，停留在保存前，不要保存。",
+    "domain": "健康与生活"
+  },
+  {
+    "instruction_zh": "在菜谱应用中查找同时包含“{ingredient1}”和“{ingredient2}”的菜谱，回答烹饪时间最短的菜名。",
+    "domain": "健康与生活"
+  },
+  {
+    "instruction_zh": "打开菜谱“{recipe}”，把 {servings} 人份所需食材加入应用内购物清单，但不要跳转购买。",
+    "domain": "健康与生活"
+  },
+  {
+    "instruction_zh": "在日历中创建一个新日程，标题为“项目评审”，时间为明天下午3点，持续1小时。",
+    "domain": "跨应用协作"
+  },
+  {
+    "instruction_zh": "在微信中，找到与“文件传输助手”的聊天，复制其中的地址，然后在地图中搜索该地址并打开详情页（不要导航）。",
+    "domain": "跨应用协作"
+  },
+  {
+    "instruction_zh": "在浏览器中打开一篇新闻，将第一段内容复制到笔记中新建笔记，标题为“新闻摘要”。",
+    "domain": "跨应用协作"
+  },
+  {
+    "instruction_zh": "在相册中选择一张照片，将其附加到发给 {recipient} 的邮件草稿中，主题为“照片分享”，不要发送。",
+    "domain": "跨应用协作"
+  },
+  {
+    "instruction_zh": "在联系人应用中新建一个联系人，姓名为“{name}”，手机号为 {phone}，保存。",
+    "domain": "跨应用协作"
+  },
+  {
+    "instruction_zh": "从短信中读取一条包含活动时间的消息（假设已有），并在日历中创建对应日程，标题为“活动”。",
+    "domain": "跨应用协作"
+  },
+  {
+    "instruction_zh": "在记账应用中新增一笔支出，类别为“餐饮”，金额为 {amount} 元，备注“午餐”。",
+    "domain": "跨应用协作"
+  },
+  {
+    "instruction_zh": "在浏览器中查询快递单号 {tracking_no} 的最新物流状态，并将单号和状态记录到笔记“物流记录”中。",
+    "domain": "跨应用协作"
+  }
+]

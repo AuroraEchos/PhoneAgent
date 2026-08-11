@@ -111,6 +111,46 @@ def test_status_bar_only_change_is_ignored() -> None:
     assert result.visual_difference_ratio == 0.0
 
 
+def test_system_chrome_is_included_when_action_targets_it() -> None:
+    import base64
+    from io import BytesIO
+
+    from PIL import Image, ImageDraw
+
+    from phoneagent.adb.screenshot import Screenshot
+    from phoneagent.devices import ScreenObservation
+
+    def observation(top_value: int) -> ScreenObservation:
+        image = Image.new("RGB", (100, 200), (80, 80, 80))
+        ImageDraw.Draw(image).rectangle((0, 0, 99, 7), fill=(top_value,) * 3)
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        return ScreenObservation(
+            screenshot=Screenshot(
+                base64_data=base64.b64encode(buffer.getvalue()).decode("ascii"),
+                width=100,
+                height=200,
+                is_blank=False,
+            ),
+            current_app="Example",
+            current_package="com.example",
+        )
+
+    verifier = ActionVerifier(VerificationConfig(visual_change_threshold=0.001))
+    before = observation(0)
+    after = observation(255)
+    result = verifier.verify(
+        action=do(action="Tap", element=[500, 10]),
+        execution=ActionResult(True, False),
+        before=before,
+        after=after,
+    )
+
+    assert verifier.visual_signature(before) == verifier.visual_signature(after)
+    assert result.status is VerificationStatus.PASSED
+    assert result.metadata["comparison_region"] == "full_screen"
+
+
 def test_wait_has_deterministic_action_semantics_without_claiming_visual_change() -> None:
     verifier = ActionVerifier()
     result = verifier.verify(
@@ -119,6 +159,63 @@ def test_wait_has_deterministic_action_semantics_without_claiming_visual_change(
         before=make_observation(10),
         after=make_observation(10),
     )
+    assert result.status is VerificationStatus.PASSED
+    assert result.observable_effect_verified is None
+    assert result.semantic_effect_verified is True
+
+
+def test_open_system_panel_requires_visible_panel_state() -> None:
+    verifier = ActionVerifier(VerificationConfig(visual_change_threshold=0.001))
+    before = make_observation(10, app="Example", package="com.example")
+    after = make_observation(80, app="Example", package="com.example")
+    after.system_panel_visible = False
+
+    result = verifier.verify(
+        action=do(action="OpenQuickSettings"),
+        execution=ActionResult(True, False),
+        before=before,
+        after=after,
+    )
+
+    assert result.status is VerificationStatus.FAILED
+    assert result.error_code == "verification_system_panel_not_open"
+    assert result.semantic_effect_verified is False
+
+
+def test_open_system_panel_semantics_pass_when_overlay_is_visible() -> None:
+    verifier = ActionVerifier()
+    before = make_observation(10, app="Example", package="com.example")
+    before.system_panel_visible = False
+    after = make_observation(80, app="Unknown (com.android.systemui)", package="com.android.systemui")
+    after.system_panel_visible = True
+    after.system_panel_name = "notificationshade"
+
+    result = verifier.verify(
+        action=do(action="OpenNotifications"),
+        execution=ActionResult(True, False),
+        before=before,
+        after=after,
+    )
+
+    assert result.status is VerificationStatus.PASSED
+    assert result.semantic_effect_verified is True
+    assert result.metadata["comparison_region"] == "full_screen"
+
+
+def test_close_system_panel_is_idempotently_verified() -> None:
+    verifier = ActionVerifier()
+    before = make_observation(10)
+    after = make_observation(10)
+    before.system_panel_visible = False
+    after.system_panel_visible = False
+
+    result = verifier.verify(
+        action=do(action="CloseSystemPanel"),
+        execution=ActionResult(True, False),
+        before=before,
+        after=after,
+    )
+
     assert result.status is VerificationStatus.PASSED
     assert result.observable_effect_verified is None
     assert result.semantic_effect_verified is True

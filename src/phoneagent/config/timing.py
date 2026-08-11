@@ -17,72 +17,54 @@ def _env_non_negative_float(name: str, default: float) -> float:
 @dataclass(slots=True)
 class ActionTimingConfig:
     keyboard_switch_delay: float = field(
-        default_factory=lambda: _env_non_negative_float(
-            "PHONE_AGENT_KEYBOARD_SWITCH_DELAY", 0.5
-        )
+        default_factory=lambda: _env_non_negative_float("KEYBOARD_SWITCH_DELAY", 0.5)
     )
     text_clear_delay: float = field(
-        default_factory=lambda: _env_non_negative_float(
-            "PHONE_AGENT_TEXT_CLEAR_DELAY", 0.35
-        )
+        default_factory=lambda: _env_non_negative_float("TEXT_CLEAR_DELAY", 0.35)
     )
     text_input_delay: float = field(
-        default_factory=lambda: _env_non_negative_float(
-            "PHONE_AGENT_TEXT_INPUT_DELAY", 0.5
-        )
+        default_factory=lambda: _env_non_negative_float("TEXT_INPUT_DELAY", 0.5)
     )
     keyboard_restore_delay: float = field(
-        default_factory=lambda: _env_non_negative_float(
-            "PHONE_AGENT_KEYBOARD_RESTORE_DELAY", 0.5
-        )
+        default_factory=lambda: _env_non_negative_float("KEYBOARD_RESTORE_DELAY", 0.5)
     )
 
 
 @dataclass(slots=True)
 class DeviceTimingConfig:
     default_tap_delay: float = field(
-        default_factory=lambda: _env_non_negative_float("PHONE_AGENT_TAP_DELAY", 0.8)
+        default_factory=lambda: _env_non_negative_float("TAP_DELAY", 0.8)
     )
     default_double_tap_delay: float = field(
-        default_factory=lambda: _env_non_negative_float(
-            "PHONE_AGENT_DOUBLE_TAP_DELAY", 0.8
-        )
+        default_factory=lambda: _env_non_negative_float("DOUBLE_TAP_DELAY", 0.8)
     )
     double_tap_interval: float = field(
-        default_factory=lambda: _env_non_negative_float(
-            "PHONE_AGENT_DOUBLE_TAP_INTERVAL", 0.12
-        )
+        default_factory=lambda: _env_non_negative_float("DOUBLE_TAP_INTERVAL", 0.12)
     )
     default_long_press_delay: float = field(
-        default_factory=lambda: _env_non_negative_float(
-            "PHONE_AGENT_LONG_PRESS_DELAY", 0.8
-        )
+        default_factory=lambda: _env_non_negative_float("LONG_PRESS_DELAY", 0.8)
     )
     default_swipe_delay: float = field(
-        default_factory=lambda: _env_non_negative_float("PHONE_AGENT_SWIPE_DELAY", 0.8)
+        default_factory=lambda: _env_non_negative_float("SWIPE_DELAY", 0.8)
     )
     default_back_delay: float = field(
-        default_factory=lambda: _env_non_negative_float("PHONE_AGENT_BACK_DELAY", 0.8)
+        default_factory=lambda: _env_non_negative_float("BACK_DELAY", 0.8)
     )
     default_home_delay: float = field(
-        default_factory=lambda: _env_non_negative_float("PHONE_AGENT_HOME_DELAY", 0.8)
+        default_factory=lambda: _env_non_negative_float("HOME_DELAY", 0.8)
     )
     default_launch_delay: float = field(
-        default_factory=lambda: _env_non_negative_float("PHONE_AGENT_LAUNCH_DELAY", 1.2)
+        default_factory=lambda: _env_non_negative_float("LAUNCH_DELAY", 1.2)
     )
 
 
 @dataclass(slots=True)
 class ConnectionTimingConfig:
     adb_restart_delay: float = field(
-        default_factory=lambda: _env_non_negative_float(
-            "PHONE_AGENT_ADB_RESTART_DELAY", 2.0
-        )
+        default_factory=lambda: _env_non_negative_float("ADB_RESTART_DELAY", 2.0)
     )
     server_restart_delay: float = field(
-        default_factory=lambda: _env_non_negative_float(
-            "PHONE_AGENT_SERVER_RESTART_DELAY", 1.0
-        )
+        default_factory=lambda: _env_non_negative_float("SERVER_RESTART_DELAY", 1.0)
     )
 
 
