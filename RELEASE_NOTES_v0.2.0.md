@@ -3,6 +3,22 @@
 PhoneAgent v0.2.0 is the final architecture-focused release before the project moves into
 real-device evaluation, regression testing, and maintenance mode.
 
+## Reliability fixes
+
+- Revalidate `Tap`, `Double Tap`, `Long Press`, and `Swipe` against a fresh screenshot immediately
+  before ADB dispatch. A changed target, foreground app, system-panel state, display geometry, or
+  near-full-screen replacement invalidates the old action with zero touch.
+- Reuse the fresh observation for replanning instead of replaying or heuristically adjusting a
+  stale coordinate. Ordinary video, carousel, and feed motion does not override an unchanged
+  target region.
+- Require action-only model response content by default. Provider `reasoning_content` remains
+  available for audit evidence without making the executable channel harder to parse.
+- Retry the first missing, malformed, or schema-invalid action once inside the same Agent step,
+  without touching the device or consuming recovery budget. The retry completion is capped at
+  512 tokens by default and is fully recorded as a `protocol_retry` event.
+- Validate every action against a closed keyword schema and reject unknown fields, duplicate
+  keywords, missing required arguments, dynamic expressions, and invalid values before execution.
+
 ## Runtime convergence
 
 - Replaced the large monolithic step decision tree with explicit observation, context,
@@ -58,6 +74,8 @@ real-device evaluation, regression testing, and maintenance mode.
 ## Validation status
 
 The unit, integration-style, fault-injection, Web HTTP, JavaScript syntax, lint, package build,
-and clean-wheel checks are release gates. The first six-case real-device smoke matrix passed on a
-vivo Android 16 device; the retained exploratory failure and methodology are documented in
+and clean-wheel checks are release gates. The updated release passes 186 tests and 55 subtests.
+The first six-case real-device smoke matrix passed on a vivo Android 16 device; this update also
+passed a controlled pre-action race with zero Tap dispatch, a Mango TV popup-race task, and an
+action-only JD search task. The retained exploratory failure and methodology are documented in
 `docs/REAL_DEVICE_RESULT_v0.2.0.md`.

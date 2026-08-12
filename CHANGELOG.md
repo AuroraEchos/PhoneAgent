@@ -6,23 +6,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-### Added
-
-- Pre-dispatch visual freshness checks for coordinate actions, with target-region, foreground-app,
-  system-panel, display-dimension, and near-full-screen replacement evidence in trajectories.
-- A diagnostic `--disable-pre-action-freshness` switch and a dedicated real-device race case.
-- An action-only response contract with one bounded same-step protocol retry, precise protocol
-  error codes, rejected-response metrics, and `protocol_retry` trajectory events.
-
-### Fixed
-
-- Cancel stale screenshot-bound actions with zero touch and replan from the fresh observation,
-  including changes that occur while awaiting sensitive-action confirmation.
-- Keep dynamic video, carousel, and feed motion from invalidating an unchanged target, and keep
-  successful zero-touch replans from exhausting the per-failure recovery budget.
-- Reject unknown action fields, duplicate keywords, missing required arguments, and invalid
-  message/instruction values through a closed per-action schema before execution.
-
 ## [0.2.0] - 2026-08-12
 
 ### Added
@@ -34,6 +17,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   Web task-generation race coverage, and injected observation-timeout/ADB-disconnect tests.
 - A recorded six-case Android 16 real-device release matrix, including a retained exploratory
   failure and separate runtime/task-success reporting.
+- Pre-dispatch visual freshness checks for coordinate actions, with target-region, foreground-app,
+  system-panel, display-dimension, and near-full-screen replacement evidence in trajectories.
+- A diagnostic `--disable-pre-action-freshness` switch and a dedicated real-device race case.
+- An action-only response contract with one bounded same-step protocol retry, precise protocol
+  error codes, rejected-response metrics, and `protocol_retry` trajectory events.
 
 ### Changed
 
@@ -57,6 +45,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   instead of replacing them with a bare-reraise runtime error.
 - Accepted reasoning-only responses from deliberately short model preflight probes, and restored
   the user's original input method after a task that used ADB Keyboard.
+- Cancelled stale screenshot-bound actions with zero touch and replanned from the fresh observation,
+  including changes that occur while awaiting sensitive-action confirmation.
+- Kept dynamic video, carousel, and feed motion from invalidating an unchanged target, and kept
+  successful zero-touch replans from exhausting the per-failure recovery budget.
+- Rejected unknown action fields, duplicate keywords, missing required arguments, and invalid
+  message/instruction values through a closed per-action schema before execution.
 
 ### Compatibility
 
