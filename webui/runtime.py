@@ -11,6 +11,7 @@ import threading
 import time
 import traceback
 from contextlib import redirect_stdout
+from contextvars import ContextVar
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable
@@ -206,6 +207,10 @@ class ConsoleRuntime:
         self._events: list[dict[str, Any]] = []
         self._next_sequence = 1
         self._task_thread: threading.Thread | None = None
+        self._callback_task_id: ContextVar[str | None] = ContextVar(
+            f"phoneagent_web_task_{id(self)}",
+            default=None,
+        )
         self._check_thread: threading.Thread | None = None
         self._checking = False
         self._closing = False
@@ -430,7 +435,18 @@ class ConsoleRuntime:
             raise ValueError("任务不能为空")
         if len(normalized) > 8_000:
             raise ValueError("任务文本不能超过 8000 个字符")
+        # A task becomes terminal just before its worker performs final cleanup.
+        # Join that already-terminal worker outside the runtime lock so callbacks
+        # from two task generations can never overlap.
         with self._condition:
+            if self.task["status"] in BUSY_TASK_STATES:
+                raise RuntimeError("已有任务正在执行")
+            previous_thread = self._task_thread
+        if previous_thread is not None and previous_thread.is_alive():
+            previous_thread.join()
+        with self._condition:
+            if self._closing:
+                raise RuntimeError("Web Console 正在关闭")
             if self.startup["status"] != "ready" or self._agent is None:
                 raise RuntimeError("启动检查尚未通过")
             if self.task["status"] in BUSY_TASK_STATES:
@@ -492,6 +508,7 @@ class ConsoleRuntime:
         agent = self._agent
         if agent is None:
             return
+        context_token = self._callback_task_id.set(task_id)
         try:
             result = agent.run(goal)
             state = agent.state.to_dict()
@@ -551,11 +568,17 @@ class ConsoleRuntime:
                     self._prompt_answered = True
                     self._prompt_response = False
                 self._condition.notify_all()
+            self._callback_task_id.reset(context_token)
 
     def _on_agent_event(self, event: AgentEvent) -> None:
         payload = _json_safe(event.payload)
+        task_id = self._callback_task_id.get()
         with self._condition:
-            if self.task["status"] not in BUSY_TASK_STATES:
+            if (
+                task_id is None
+                or self.task["id"] != task_id
+                or self.task["status"] not in BUSY_TASK_STATES
+            ):
                 return
             step = event.step
             if step is None and isinstance(payload, dict):
@@ -582,16 +605,19 @@ class ConsoleRuntime:
                 payload,
                 timestamp=event.timestamp,
                 step=step if isinstance(step, int) else None,
-                task_id=self.task["id"],
+                task_id=task_id,
             )
 
     def _on_note(self, note: str) -> None:
+        task_id = self._callback_task_id.get()
         with self._condition:
+            if task_id is None or self.task["id"] != task_id:
+                return
             self._append_event_locked(
                 "note",
                 note,
                 {},
-                task_id=self.task["id"],
+                task_id=task_id,
             )
 
     def _confirmation_callback(self, message: str) -> bool:
@@ -601,13 +627,16 @@ class ConsoleRuntime:
         self._wait_for_prompt("takeover", message)
 
     def _wait_for_prompt(self, prompt_type: str, message: str) -> bool:
+        task_id = self._callback_task_id.get()
         with self._condition:
+            if task_id is None or self.task["id"] != task_id:
+                return False
             prompt_id = uuid4().hex
             self.pending_prompt = {
                 "id": prompt_id,
                 "type": prompt_type,
                 "message": str(message),
-                "task_id": self.task["id"],
+                "task_id": task_id,
                 "created_at": time.time(),
             }
             self._prompt_answered = False
@@ -617,7 +646,7 @@ class ConsoleRuntime:
                 "user_prompt",
                 "等待用户确认" if prompt_type == "confirmation" else "等待人工接管",
                 {"prompt_type": prompt_type, "message": str(message)},
-                task_id=self.task["id"],
+                task_id=task_id,
             )
             while not self._prompt_answered and not self._closing:
                 self._condition.wait()
@@ -634,7 +663,7 @@ class ConsoleRuntime:
                     else ("用户已确认继续" if answer else "用户拒绝了敏感操作")
                 ),
                 {"prompt_type": prompt_type, "accepted": answer, "cancelled": cancelling},
-                task_id=self.task["id"],
+                task_id=task_id,
             )
             return answer
 

@@ -166,6 +166,40 @@ class RuntimeCoreTests(unittest.TestCase):
         self.assertEqual(agent.step_count, 1)
         self.assertIsNone(agent.state.last_execution["command_success"])
 
+    def test_finish_step_preserves_event_order_and_command_semantics(self) -> None:
+        agent = PhoneAgent(
+            model_config=ModelConfig(),
+            agent_config=AgentConfig(save_trajectory=False, verbose=False),
+            device=_FakeDevice(),  # type: ignore[arg-type]
+            model_client=_FinishModel(),  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(agent.run("测试任务"), "done")
+
+        events = agent.trajectory.events
+        self.assertEqual(
+            [event["type"] for event in events],
+            [
+                "phase_change",
+                "start",
+                "phase_change",
+                "observation",
+                "phase_change",
+                "model_request",
+                "model_response",
+                "metrics",
+                "action",
+                "phase_change",
+                "execution",
+                "phase_change",
+                "finish",
+            ],
+        )
+        execution = next(event for event in events if event["type"] == "execution")
+        self.assertIsNone(execution["payload"]["command_success"])
+        self.assertEqual(execution["payload"]["action"]["_metadata"], "finish")
+        self.assertEqual(events[-1]["payload"]["phase"], "completed")
+
     def test_event_callback_cannot_mutate_runtime_action_or_transition_state(self) -> None:
         def mutate_event(event: AgentEvent) -> None:
             if event.type is EventType.ACTION:

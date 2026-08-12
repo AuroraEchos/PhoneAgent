@@ -151,6 +151,23 @@ class _RecoveryExecution:
     observation: ScreenObservation | None = None
 
 
+@dataclass(slots=True)
+class _SelectedResponse:
+    """One response selected by deterministic launch or model planning."""
+
+    response: ModelResponse
+    source: str
+
+
+@dataclass(slots=True)
+class _AcceptedAction:
+    """A parsed action together with the response and source that produced it."""
+
+    response: ModelResponse
+    action: dict[str, Any]
+    source: str
+
+
 EventCallback = Callable[[AgentEvent], None]
 
 
@@ -348,8 +365,31 @@ class PhoneAgent:
         self._step_count += 1
         self.state.begin_step(self._step_count)
         msgs = get_messages()
-        self._transition(AgentPhase.OBSERVING, "Acquire current device state")
+        observation = await self._acquire_step_observation_async()
+        if isinstance(observation, StepResult):
+            return observation
 
+        initial_launch = self._prepare_step_context(
+            observation,
+            user_prompt=user_prompt,
+            is_first=is_first,
+        )
+        selected = await self._select_step_response_async(
+            observation,
+            initial_launch=initial_launch,
+            messages=msgs,
+        )
+        if isinstance(selected, StepResult):
+            return selected
+
+        accepted = await self._accept_step_action_async(selected, messages=msgs)
+        if isinstance(accepted, StepResult):
+            return accepted
+        return await self._execute_accepted_action_async(accepted, observation)
+
+    async def _acquire_step_observation_async(self) -> ScreenObservation | StepResult:
+        """Acquire and validate the trusted observation that begins every step."""
+        self._transition(AgentPhase.OBSERVING, "Acquire current device state")
         try:
             observation = await self._next_observation_async()
         except Exception as exc:
@@ -365,7 +405,6 @@ class PhoneAgent:
 
         if self._cancel_event.is_set():
             return self._cancelled_result()
-
         if not observation.screenshot.available:
             return await self._handle_runtime_failure_async(
                 message=observation.screenshot.error or "Screenshot unavailable",
@@ -385,7 +424,16 @@ class PhoneAgent:
                 raw_model_output=None,
                 action=None,
             )
+        return observation
 
+    def _prepare_step_context(
+        self,
+        observation: ScreenObservation,
+        *,
+        user_prompt: str | None,
+        is_first: bool,
+    ) -> TaskEntryApp | None:
+        """Append the observation and choose the deterministic planning source."""
         append_observation_message(
             self._context,
             observation=observation,
@@ -408,7 +456,16 @@ class PhoneAgent:
                 else "Request one constrained model action"
             ),
         )
+        return initial_launch
 
+    async def _select_step_response_async(
+        self,
+        observation: ScreenObservation,
+        *,
+        initial_launch: TaskEntryApp | None,
+        messages: dict[str, str],
+    ) -> _SelectedResponse | StepResult:
+        """Select a deterministic launch response or request a model response."""
         if initial_launch is not None:
             action_text = (
                 'do(action="Launch", app='
@@ -435,109 +492,127 @@ class PhoneAgent:
                     "evidence": initial_launch.evidence,
                 },
             )
-        else:
-            try:
-                if self.agent_config.verbose:
-                    print("\n" + "=" * 50)
-                    print(f"{msgs['thinking']}:")
-                    print("-" * 50)
-                self._record_event(
-                    EventType.MODEL_REQUEST,
-                    "Requesting model",
-                    {
-                        "step": self._step_count,
-                        "message_count": len(self._context),
-                        "current_app": observation.current_app,
-                        "phase": self.state.phase.value,
-                    },
-                )
-                response = await self._request_model_async()
-            except ModelProtocolError as exc:
-                if self._cancel_event.is_set():
-                    return self._cancelled_result()
-                error_code = "model_output_truncated" if exc.truncated else "model_protocol_error"
-                message = (
-                    "Model output was truncated before a valid terminal action was completed "
-                    f"(finish_reason={exc.finish_reason}): {exc}"
-                    if exc.truncated
-                    else f"Model protocol error: {exc}"
-                )
-                logger.warning("%s", message)
-                self._strict_action_recovery = prepare_protocol_recovery(
-                    self._context,
-                    reason=message,
-                )
-                self._record_event(
-                    EventType.MODEL_RESPONSE,
-                    (
-                        "Truncated model response rejected"
-                        if exc.truncated
-                        else "Model response rejected by protocol"
-                    ),
-                    {
-                        "raw_content": exc.raw_content,
-                        "protocol_error": str(exc),
-                        "finish_reason": exc.finish_reason,
-                        "truncated": exc.truncated,
-                        "metrics": exc.metrics,
-                        "step": self._step_count,
-                    },
-                )
-                return await self._handle_runtime_failure_async(
-                    message=message,
-                    error_code=error_code,
-                    thinking="",
-                    raw_model_output=exc.raw_content,
-                    action=None,
-                )
-            except Exception as exc:
-                if self._cancel_event.is_set():
-                    return self._cancelled_result()
-                logger.exception("Model request failed: %s", exc)
-                if self._context and self._context[-1].get("role") == "user":
-                    # The request never produced an assistant turn. Remove the current
-                    # user message so the next retry keeps a valid role sequence and
-                    # attaches a fresh screenshot. The system prompt remains in place.
-                    self._context.pop()
-                return await self._handle_runtime_failure_async(
-                    message=f"Model request failed: {exc}",
-                    error_code="model_request_failed",
-                    thinking="",
-                    raw_model_output=None,
-                    action=None,
-                )
+            return _SelectedResponse(response=response, source="runtime_initial_launch")
+        return await self._request_step_model_response_async(observation, messages=messages)
 
-            metrics = {
-                "time_to_first_token": response.time_to_first_token,
-                "time_to_thinking_end": response.time_to_thinking_end,
-                "total_time": response.total_time,
-                "attempts": response.attempts,
-                "finish_reason": response.finish_reason,
-                "prompt_tokens": response.prompt_tokens,
-                "completion_tokens": response.completion_tokens,
-                "total_tokens": response.total_tokens,
-                "truncated": response.truncated,
-            }
+    async def _request_step_model_response_async(
+        self,
+        observation: ScreenObservation,
+        *,
+        messages: dict[str, str],
+    ) -> _SelectedResponse | StepResult:
+        """Request one model action and normalize request failures into step results."""
+        try:
+            if self.agent_config.verbose:
+                print("\n" + "=" * 50)
+                print(f"{messages['thinking']}:")
+                print("-" * 50)
+            self._record_event(
+                EventType.MODEL_REQUEST,
+                "Requesting model",
+                {
+                    "step": self._step_count,
+                    "message_count": len(self._context),
+                    "current_app": observation.current_app,
+                    "phase": self.state.phase.value,
+                },
+            )
+            response = await self._request_model_async()
+        except ModelProtocolError as exc:
+            if self._cancel_event.is_set():
+                return self._cancelled_result()
+            error_code = "model_output_truncated" if exc.truncated else "model_protocol_error"
+            message = (
+                "Model output was truncated before a valid terminal action was completed "
+                f"(finish_reason={exc.finish_reason}): {exc}"
+                if exc.truncated
+                else f"Model protocol error: {exc}"
+            )
+            logger.warning("%s", message)
+            self._strict_action_recovery = prepare_protocol_recovery(
+                self._context,
+                reason=message,
+            )
             self._record_event(
                 EventType.MODEL_RESPONSE,
-                "Model response received",
+                (
+                    "Truncated model response rejected"
+                    if exc.truncated
+                    else "Model response rejected by protocol"
+                ),
                 {
-                    "thinking": response.thinking,
-                    "action": response.action,
-                    "raw_content": response.raw_content,
-                    "metrics": metrics,
+                    "raw_content": exc.raw_content,
+                    "protocol_error": str(exc),
+                    "finish_reason": exc.finish_reason,
+                    "truncated": exc.truncated,
+                    "metrics": exc.metrics,
                     "step": self._step_count,
                 },
             )
-            self._record_event(
-                EventType.METRICS,
-                "Model timing captured",
-                {"metrics": metrics, "step": self._step_count},
+            return await self._handle_runtime_failure_async(
+                message=message,
+                error_code=error_code,
+                thinking="",
+                raw_model_output=exc.raw_content,
+                action=None,
+            )
+        except Exception as exc:
+            if self._cancel_event.is_set():
+                return self._cancelled_result()
+            logger.exception("Model request failed: %s", exc)
+            if self._context and self._context[-1].get("role") == "user":
+                # No assistant turn exists, so the retry must attach a fresh screenshot.
+                self._context.pop()
+            return await self._handle_runtime_failure_async(
+                message=f"Model request failed: {exc}",
+                error_code="model_request_failed",
+                thinking="",
+                raw_model_output=None,
+                action=None,
             )
 
+        self._record_successful_model_response(response)
+        return _SelectedResponse(response=response, source="model")
+
+    def _record_successful_model_response(self, response: ModelResponse) -> None:
+        metrics = {
+            "time_to_first_token": response.time_to_first_token,
+            "time_to_thinking_end": response.time_to_thinking_end,
+            "total_time": response.total_time,
+            "attempts": response.attempts,
+            "finish_reason": response.finish_reason,
+            "prompt_tokens": response.prompt_tokens,
+            "completion_tokens": response.completion_tokens,
+            "total_tokens": response.total_tokens,
+            "truncated": response.truncated,
+        }
+        self._record_event(
+            EventType.MODEL_RESPONSE,
+            "Model response received",
+            {
+                "thinking": response.thinking,
+                "action": response.action,
+                "raw_content": response.raw_content,
+                "metrics": metrics,
+                "step": self._step_count,
+            },
+        )
+        self._record_event(
+            EventType.METRICS,
+            "Model timing captured",
+            {"metrics": metrics, "step": self._step_count},
+        )
+
+    async def _accept_step_action_async(
+        self,
+        selected: _SelectedResponse,
+        *,
+        messages: dict[str, str],
+    ) -> _AcceptedAction | StepResult:
+        """Parse, record, and append one response action to model history."""
         if self._cancel_event.is_set():
             return self._cancelled_result()
-
+        response = selected.response
         try:
             action = parse_action(response.action)
         except ActionParseError as exc:
@@ -565,19 +640,17 @@ class PhoneAgent:
                 action=None,
             )
 
-        signature = self._action_signature(action)
-        coordinate_signature = self._action_coordinate_signature(action)
         self.state.update_action(
             action,
             step=self._step_count,
-            signature=signature,
-            coordinate_signature=coordinate_signature,
+            signature=self._action_signature(action),
+            coordinate_signature=self._action_coordinate_signature(action),
         )
         self._record_event(
             EventType.ACTION,
             (
                 "Runtime selected deterministic initial app launch"
-                if initial_launch is not None
+                if selected.source == "runtime_initial_launch"
                 else "Parsed action"
             ),
             {
@@ -585,12 +658,12 @@ class PhoneAgent:
                 "thinking": response.thinking,
                 "step": self._step_count,
                 "repeated_action_count": self.state.repeated_action_count,
-                "source": ("runtime_initial_launch" if initial_launch is not None else "model"),
+                "source": selected.source,
             },
         )
         if self.agent_config.verbose:
             print("-" * 50)
-            print(f"{msgs['action']}:")
+            print(f"{messages['action']}:")
             print(json.dumps(action, ensure_ascii=False, indent=2))
             print("=" * 50 + "\n")
 
@@ -599,12 +672,33 @@ class PhoneAgent:
             MessageBuilder.create_assistant_message(response.to_assistant_message_content())
         )
         self._transition(AgentPhase.EXECUTING, "Execute validated Android action")
+        return _AcceptedAction(response=response, action=action, source=selected.source)
 
+    async def _execute_accepted_action_async(
+        self,
+        accepted: _AcceptedAction,
+        observation: ScreenObservation,
+    ) -> StepResult:
+        """Execute one accepted action, then verify and recover when required."""
+        action = accepted.action
         if self._cancel_event.is_set():
             return self._cancelled_result()
+        execution = await self._execute_device_action_async(action, observation)
+        self._record_command_execution(action, execution)
 
+        if self._cancel_event.is_set():
+            return self._cancelled_result(action=action, command_success=execution.success)
+        if action.get("_metadata") == "finish" or execution.should_finish:
+            return self._terminal_action_step_result(accepted, execution)
+        return await self._evaluate_action_result_async(accepted, execution, observation)
+
+    async def _execute_device_action_async(
+        self,
+        action: dict[str, Any],
+        observation: ScreenObservation,
+    ) -> ActionResult:
         if self._should_block_repeated_action(action):
-            execution = ActionResult(
+            return ActionResult(
                 success=False,
                 should_finish=False,
                 message=(
@@ -617,45 +711,53 @@ class PhoneAgent:
                     "stagnant_observation_count": self.state.stagnant_observation_count,
                 },
             )
-        else:
-            execution = await asyncio.to_thread(
-                self.action_handler.execute,
-                action,
-                int(observation.screenshot.display_width or observation.screenshot.width),
-                int(observation.screenshot.display_height or observation.screenshot.height),
-            )
+        return await asyncio.to_thread(
+            self.action_handler.execute,
+            action,
+            int(observation.screenshot.display_width or observation.screenshot.width),
+            int(observation.screenshot.display_height or observation.screenshot.height),
+        )
 
-        self._record_command_execution(action, execution)
+    def _terminal_action_step_result(
+        self,
+        accepted: _AcceptedAction,
+        execution: ActionResult,
+    ) -> StepResult:
+        action = accepted.action
+        self.state.update_execution(
+            success=execution.success,
+            command_success=None,
+            should_finish=True,
+            message=execution.message,
+            action=action,
+            error_code=execution.error_code,
+            metadata=execution.metadata,
+        )
+        message = execution.message or str(action.get("message") or "") or None
+        return StepResult(
+            success=execution.success,
+            finished=True,
+            action=action,
+            thinking=accepted.response.thinking,
+            message=message,
+            raw_model_output=accepted.response.raw_content,
+            error_code=execution.error_code,
+            command_success=None,
+            phase=self.state.phase.value,
+        )
 
-        if self._cancel_event.is_set():
-            return self._cancelled_result(action=action, command_success=execution.success)
-
-        if action.get("_metadata") == "finish" or execution.should_finish:
-            self.state.update_execution(
-                success=execution.success,
-                command_success=None,
-                should_finish=True,
-                message=execution.message,
-                action=action,
-                error_code=execution.error_code,
-                metadata=execution.metadata,
-            )
-            message = execution.message or str(action.get("message") or "") or None
-            return StepResult(
-                success=execution.success,
-                finished=True,
-                action=action,
-                thinking=response.thinking,
-                message=message,
-                raw_model_output=response.raw_content,
-                error_code=execution.error_code,
-                command_success=None,
-                phase=self.state.phase.value,
-            )
-
+    async def _evaluate_action_result_async(
+        self,
+        accepted: _AcceptedAction,
+        execution: ActionResult,
+        observation: ScreenObservation,
+    ) -> StepResult:
+        action = accepted.action
+        response = accepted.response
         verification = await self._verify_action_async(action, execution, observation)
         if self._cancel_event.is_set():
             return self._cancelled_result(action=action, command_success=execution.success)
+
         recovery_execution: _RecoveryExecution | None = None
         overall_success = verification.passed
         final_verification = verification
@@ -663,8 +765,6 @@ class PhoneAgent:
         message = verification.message if not verification.passed else execution.message
 
         if not verification.passed:
-            if self._cancel_event.is_set():
-                return self._cancelled_result(action=action, command_success=execution.success)
             recovery_execution = await self._perform_recovery_async(
                 action=action,
                 execution=execution,
@@ -682,12 +782,8 @@ class PhoneAgent:
                 message = recovery_execution.outcome.message
                 error_code = recovery_execution.outcome.error_code or error_code
 
-        if overall_success:
-            self.recovery_manager.mark_success()
-        elif recovery_execution is not None and recovery_execution.outcome.success:
-            # The recovery operation itself succeeded (e.g. fresh screenshot
-            # acquired, takeover completed).  Do not penalise the model for a
-            # failure that the runtime has already mitigated.
+        recovery_succeeded = bool(recovery_execution and recovery_execution.outcome.success)
+        if overall_success or recovery_succeeded:
             self.recovery_manager.mark_success()
 
         recovery_payload = (
@@ -702,13 +798,8 @@ class PhoneAgent:
             error_code=error_code,
             metadata=execution.metadata,
         )
-        # A successful recovery resets the consecutive-failure counter so the
-        # model gets a fair budget for the replanning turn.
-        if (
-            not overall_success
-            and recovery_execution is not None
-            and recovery_execution.outcome.success
-        ):
+        if not overall_success and recovery_succeeded:
+            # Successful mitigation gives the replanning turn a fresh failure budget.
             self.state.consecutive_failures = 0
         self.state.update_verification(final_verification.to_dict())
         if recovery_payload is not None:
@@ -720,7 +811,6 @@ class PhoneAgent:
         )
         if not finished:
             self._transition(AgentPhase.OBSERVING, "Continue with verified/recovered state")
-
         return StepResult(
             success=overall_success,
             finished=finished,

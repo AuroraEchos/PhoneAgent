@@ -7,6 +7,7 @@ import pytest
 
 import phoneagent.model.client as client_module
 from phoneagent.model import (
+    AsyncOpenAIModelClient,
     ModelClient,
     ModelConfig,
     ModelProtocolError,
@@ -68,6 +69,34 @@ class _BlockingCompletions:
         self.stream = stream
 
     def create(self, **_kwargs: object):
+        return self.stream
+
+
+class _FakeAsyncStream:
+    def __init__(self, chunks: list[SimpleNamespace]) -> None:
+        self._chunks = iter(chunks)
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._chunks)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _FakeAsyncCompletions:
+    def __init__(self, chunks: list[SimpleNamespace]) -> None:
+        self.stream = _FakeAsyncStream(chunks)
+        self.calls: list[dict[str, object]] = []
+
+    async def create(self, **kwargs: object) -> _FakeAsyncStream:
+        self.calls.append(kwargs)
         return self.stream
 
 
@@ -169,3 +198,38 @@ def test_sync_stream_is_closed_when_request_is_cancelled() -> None:
     assert stream.closed.is_set()
     assert len(captured) == 1
     assert isinstance(captured[0], ModelRequestCancelled)
+
+
+def test_async_transport_uses_the_same_response_and_usage_semantics() -> None:
+    import asyncio
+
+    async def exercise() -> None:
+        completions = _FakeAsyncCompletions(
+            [
+                _chunk(reasoning="先分析"),
+                _chunk(content='finish(message="done", success=True)'),
+                _chunk(
+                    finish_reason="stop",
+                    usage={"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+                ),
+            ]
+        )
+        client = AsyncOpenAIModelClient(ModelConfig(capture_usage=True, max_retries=0))
+        await client.client.close()
+        client.client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+        response = await client.request(
+            [{"role": "user", "content": "test"}],
+            print_stream=False,
+        )
+
+        assert response.thinking == "先分析"
+        assert response.action == 'finish(message="done", success=True)'
+        assert response.finish_reason == "stop"
+        assert response.prompt_tokens == 11
+        assert response.completion_tokens == 7
+        assert response.total_tokens == 18
+        assert completions.calls[0]["stream_options"] == {"include_usage": True}
+        assert completions.stream.closed is True
+
+    asyncio.run(exercise())
