@@ -5,6 +5,7 @@ def test_v014_public_imports_remain_available_after_refactor() -> None:
     from phoneagent import (
         AgentConfig,
         AgentPhase,
+        FreshnessConfig,
         PhoneAgent,
         RecoveryConfig,
         StepResult,
@@ -44,6 +45,8 @@ def test_v014_public_imports_remain_available_after_refactor() -> None:
         AgentEvent,
         AgentState,
         EventType,
+        FreshnessResult,
+        ObservationFreshnessGuard,
         RecoveryContext,
         RecoveryDecision,
         RecoveryManager,
@@ -58,6 +61,7 @@ def test_v014_public_imports_remain_available_after_refactor() -> None:
     exported = (
         AgentConfig,
         AgentPhase,
+        FreshnessConfig,
         PhoneAgent,
         RecoveryConfig,
         StepResult,
@@ -84,6 +88,8 @@ def test_v014_public_imports_remain_available_after_refactor() -> None:
         AgentEvent,
         AgentState,
         EventType,
+        FreshnessResult,
+        ObservationFreshnessGuard,
         RecoveryContext,
         RecoveryDecision,
         RecoveryManager,

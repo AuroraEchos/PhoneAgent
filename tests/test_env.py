@@ -31,6 +31,18 @@ def test_cli_reads_lazy_launch_timeout_from_environment(monkeypatch) -> None:
     assert parse_args().app_launch_timeout_seconds == 8.25
 
 
+def test_cli_pre_action_freshness_is_default_on_with_diagnostic_opt_out(
+    monkeypatch,
+) -> None:
+    from phoneagent.cli import parse_args
+
+    monkeypatch.setattr(sys, "argv", ["phoneagent"])
+    assert parse_args().disable_pre_action_freshness is False
+
+    monkeypatch.setattr(sys, "argv", ["phoneagent", "--disable-pre-action-freshness"])
+    assert parse_args().disable_pre_action_freshness is True
+
+
 def test_importing_package_does_not_load_dotenv(tmp_path) -> None:
     (tmp_path / ".env").write_text("IMPORT_SENTINEL=loaded\n", encoding="utf-8")
     env = os.environ.copy()

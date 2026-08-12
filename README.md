@@ -34,6 +34,8 @@ Observe → Plan → Execute → Verify → Recover → Repeat
 - 支持动作执行后的状态验证。
 - 通知与控制中心使用语义动作：优先执行 `cmd statusbar`，打开无效时由执行层自动使用左上角或右上角下拉手势兜底，并将内部尝试写入轨迹。
 - 中断信号可关闭当前模型流并提前结束 Wait；已发送的原子 ADB 命令完成后不会再执行下一步。
+- 坐标动作在用户确认后、ADB 下发前重新观察屏幕；目标区域或页面结构变化时取消旧动作，
+  以新截图重新规划，并在轨迹中记录零触摸的 precondition 冲突。
 - 使用排除系统栏的主体区域指纹判断页面停滞，并仅对真实坐标动作进行坐标重复检测。
 - 只使用重新规划、重新观察、安全动作重试、人工接管和终止五类有界恢复。
 - `AgentState.phase` 提供唯一实时阶段，统一 `AgentEvent` 记录完整审计历史。
@@ -45,6 +47,8 @@ Observe → Plan → Execute → Verify → Recover → Repeat
 - 协议错误进入 strict-action recovery，不会尝试提取多个动作或修补字符串。
 - 只有 `Launch`、`Wait`、`Home` 可在无敏感标记时进行一次安全重试。
 - `Tap`、`Type`、`Swipe`、`Back` 等动作不会被自动重放。
+- `Tap`、`Double Tap`、`Long Press` 和 `Swipe` 默认启用执行前截图新鲜度守卫；仅诊断时
+  可使用 `--disable-pre-action-freshness` 关闭。
 - 当前状态只保存运行所需的最新值；模型原文、思考、动作、验证和阶段历史以 trajectory
   event stream 为准。
 

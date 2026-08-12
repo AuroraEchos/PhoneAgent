@@ -18,6 +18,7 @@ class EventType(str, Enum):
     MODEL_RESPONSE = "model_response"
     THINKING = "thinking"
     ACTION = "action"
+    PRECONDITION = "precondition"
     EXECUTION = "execution"
     VERIFICATION = "verification"
     RECOVERY = "recovery"

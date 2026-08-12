@@ -106,12 +106,14 @@ class RecoveryManager:
         "api_callback_not_configured",
         "empty_api_instruction",
         "empty_note",
+        "pre_action_observation_changed",
     }
     _OBSERVATION_ERRORS = {
         "observation_failed",
         "screenshot_unavailable",
         "verification_observation_failed",
         "device_unavailable",
+        "pre_action_observation_failed",
     }
     _MODEL_PROTOCOL_ERRORS = {
         "action_parse_error",

@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- Pre-dispatch visual freshness checks for coordinate actions, with target-region, foreground-app,
+  system-panel, display-dimension, and near-full-screen replacement evidence in trajectories.
+- A diagnostic `--disable-pre-action-freshness` switch and a dedicated real-device race case.
+
+### Fixed
+
+- Cancel stale screenshot-bound actions with zero touch and replan from the fresh observation,
+  including changes that occur while awaiting sensitive-action confirmation.
+- Keep dynamic video, carousel, and feed motion from invalidating an unchanged target, and keep
+  successful zero-touch replans from exhausting the per-failure recovery budget.
+
 ## [0.2.0] - 2026-08-12
 
 ### Added

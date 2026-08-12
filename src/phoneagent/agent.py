@@ -43,6 +43,8 @@ from phoneagent.runtime import (
     AgentPhase,
     AgentState,
     EventType,
+    FreshnessConfig,
+    ObservationFreshnessGuard,
     RecoveryConfig,
     RecoveryContext,
     RecoveryManager,
@@ -102,6 +104,7 @@ class AgentConfig:
     save_trajectory: bool = True
     allow_fallback_screenshot: bool = False
     app_launch_timeout_seconds: float = 15.0
+    freshness: FreshnessConfig = field(default_factory=FreshnessConfig)
     verification: VerificationConfig = field(default_factory=VerificationConfig)
     recovery: RecoveryConfig = field(default_factory=RecoveryConfig)
 
@@ -212,6 +215,7 @@ class PhoneAgent:
             cancel_event=self._cancel_event,
         )
         self.verifier = ActionVerifier(self.agent_config.verification)
+        self.freshness_guard = ObservationFreshnessGuard(self.agent_config.freshness)
         self.recovery_manager = RecoveryManager(self.agent_config.recovery)
         self.event_callback = event_callback
         self.state = AgentState()
@@ -675,19 +679,119 @@ class PhoneAgent:
         action = accepted.action
         if self._cancel_event.is_set():
             return self._cancelled_result()
-        execution = await self._execute_device_action_async(action, observation)
+
+        execution_observation = observation
+        confirmation_checked = False
+        if self.freshness_guard.requires_check(action):
+            confirmation = await asyncio.to_thread(
+                self.action_handler.request_confirmation,
+                action,
+            )
+            confirmation_checked = True
+            if confirmation is not None:
+                self._record_command_execution(action, confirmation)
+                return self._terminal_action_step_result(accepted, confirmation)
+
+            guarded = await self._guard_action_freshness_async(
+                accepted,
+                planned=observation,
+            )
+            if isinstance(guarded, StepResult):
+                return guarded
+            execution_observation = guarded
+
+        execution = await self._execute_device_action_async(
+            action,
+            execution_observation,
+            confirmation_checked=confirmation_checked,
+        )
         self._record_command_execution(action, execution)
 
         if self._cancel_event.is_set():
             return self._cancelled_result(action=action, command_success=execution.success)
         if action.get("_metadata") == "finish" or execution.should_finish:
             return self._terminal_action_step_result(accepted, execution)
-        return await self._evaluate_action_result_async(accepted, execution, observation)
+        return await self._evaluate_action_result_async(
+            accepted,
+            execution,
+            execution_observation,
+        )
+
+    async def _guard_action_freshness_async(
+        self,
+        accepted: _AcceptedAction,
+        *,
+        planned: ScreenObservation,
+    ) -> ScreenObservation | StepResult:
+        """Revalidate a screenshot-bound action immediately before dispatch."""
+        started = time.monotonic()
+        try:
+            current = await self._observe_with_retries_async(
+                retries=self.agent_config.freshness.observation_retries,
+                retry_delay=self.agent_config.freshness.observation_retry_delay,
+            )
+        except Exception as exc:
+            return await self._handle_runtime_failure_async(
+                message=f"Pre-action observation failed: {exc}",
+                error_code="pre_action_observation_failed",
+                thinking=accepted.response.thinking,
+                raw_model_output=accepted.response.raw_content,
+                action=accepted.action,
+                metadata={
+                    "command_dispatched": False,
+                    "exception_type": type(exc).__name__,
+                },
+            )
+        if self._cancel_event.is_set():
+            return self._cancelled_result(action=accepted.action)
+
+        self._record_observation(current, source="pre_action_freshness")
+        result = self.freshness_guard.check(
+            action=accepted.action,
+            planned=planned,
+            current=current,
+        )
+        result.check_duration_seconds = time.monotonic() - started
+        payload = {
+            **result.to_dict(),
+            "action": accepted.action,
+            "step": self._step_count,
+            "dispatch_authorized": result.fresh,
+            "command_dispatched": False,
+            "planned_screenshot_sha256": planned.screenshot.sha256,
+            "current_screenshot_sha256": current.screenshot.sha256,
+        }
+        self._record_event(
+            EventType.PRECONDITION,
+            (
+                "Pre-action visual state is compatible"
+                if result.fresh
+                else "Pre-action visual state changed; action invalidated"
+            ),
+            payload,
+        )
+        if result.fresh:
+            return current
+
+        self._pending_observation = current
+        return await self._handle_runtime_failure_async(
+            message=(
+                "The live screen changed after the model observation. "
+                "The coordinate action was not dispatched; replan from the fresh screen."
+            ),
+            error_code="pre_action_observation_changed",
+            thinking=accepted.response.thinking,
+            raw_model_output=accepted.response.raw_content,
+            action=accepted.action,
+            metadata=payload,
+        )
 
     async def _execute_device_action_async(
         self,
         action: dict[str, Any],
         observation: ScreenObservation,
+        *,
+        confirmation_checked: bool = False,
     ) -> ActionResult:
         if self._should_block_repeated_action(action):
             return ActionResult(
@@ -708,6 +812,7 @@ class PhoneAgent:
             action,
             int(observation.screenshot.display_width or observation.screenshot.width),
             int(observation.screenshot.display_height or observation.screenshot.height),
+            confirmation_checked=confirmation_checked,
         )
 
     def _terminal_action_step_result(
@@ -1152,6 +1257,7 @@ class PhoneAgent:
         thinking: str,
         raw_model_output: str | None,
         action: dict[str, Any] | None,
+        metadata: dict[str, Any] | None = None,
     ) -> StepResult:
         if self._cancel_event.is_set():
             return self._cancelled_result(action=action)
@@ -1170,11 +1276,16 @@ class PhoneAgent:
             observable_effect_verified=False,
             semantic_effect_verified=False,
             error_code=error_code,
+            metadata=dict(metadata or {}),
         )
         self._record_event(
             EventType.ERROR,
             message,
-            {"error_code": error_code, "step": self._step_count},
+            {
+                "error_code": error_code,
+                "step": self._step_count,
+                "metadata": dict(metadata or {}),
+            },
         )
         if self._cancel_event.is_set():
             return self._cancelled_result(action=action)
@@ -1184,6 +1295,9 @@ class PhoneAgent:
             verification=verification,
         )
         recovery_payload = recovery.outcome.to_dict()
+        recovery_succeeded = recovery.outcome.success
+        if recovery_succeeded:
+            self.recovery_manager.mark_success()
         self.state.update_execution(
             success=False,
             command_success=None,
@@ -1191,7 +1305,13 @@ class PhoneAgent:
             message=message,
             action=action,
             error_code=error_code,
+            metadata=dict(metadata or {}),
         )
+        if recovery_succeeded:
+            # A successful reobserve/replan resolves this failure episode. Keep
+            # the total recovery budget, but do not treat a safe zero-touch
+            # conflict as a growing streak of failed device commands.
+            self.state.consecutive_failures = 0
         self.state.update_verification(verification.to_dict())
         self.state.update_recovery(recovery_payload)
         finished = recovery.outcome.decision.terminal or self._failure_limit_reached()

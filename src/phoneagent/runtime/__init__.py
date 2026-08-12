@@ -1,6 +1,11 @@
 """PhoneAgent runtime primitives."""
 
 from phoneagent.runtime.events import AgentEvent, EventType
+from phoneagent.runtime.freshness import (
+    FreshnessConfig,
+    FreshnessResult,
+    ObservationFreshnessGuard,
+)
 from phoneagent.runtime.recovery import (
     RecoveryConfig,
     RecoveryContext,
@@ -24,6 +29,9 @@ __all__ = [
     "AgentPhase",
     "AgentState",
     "EventType",
+    "FreshnessConfig",
+    "FreshnessResult",
+    "ObservationFreshnessGuard",
     "RecoveryConfig",
     "RecoveryContext",
     "RecoveryDecision",

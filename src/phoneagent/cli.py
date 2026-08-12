@@ -25,7 +25,7 @@ from phoneagent.adb.screenshot import ScreenshotCaptureError, get_screenshot
 from phoneagent.config.apps import list_supported_apps
 from phoneagent.devices import AndroidDevice
 from phoneagent.model import ModelConfig
-from phoneagent.runtime import RecoveryConfig, VerificationConfig
+from phoneagent.runtime import FreshnessConfig, RecoveryConfig, VerificationConfig
 
 # ============================================================================
 # Logging Setup
@@ -265,6 +265,11 @@ Examples:
         action="store_true",
         help="Disable automatic recovery and abort on first recoverable failure"
     )
+    verification_group.add_argument(
+        "--disable-pre-action-freshness",
+        action="store_true",
+        help="Disable the coordinate-action freshness guard (diagnostic only)"
+    )
 
     # Hidden/advanced options
     _add_hidden_options(parser)
@@ -378,6 +383,9 @@ def _build_cli_config(args: argparse.Namespace) -> CLIConfig:
             trajectory_dir=args.trajectory_dir,
             allow_fallback_screenshot=args.allow_fallback_screenshot,
             app_launch_timeout_seconds=args.app_launch_timeout_seconds,
+            freshness=FreshnessConfig(
+                enabled=not args.disable_pre_action_freshness,
+            ),
             verification=VerificationConfig(
                 enabled=not args.disable_verification,
                 observation_retries=args.verification_retries,

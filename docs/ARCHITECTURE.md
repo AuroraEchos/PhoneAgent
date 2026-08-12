@@ -147,6 +147,27 @@ Actions marked sensitive, requiring confirmation, or detected as high-risk are p
 configured confirmation callback. Rejection is terminal for that action and is never
 overridden by recovery.
 
+### Pre-action visual concurrency guard
+
+Coordinate actions are bound to the screenshot that produced them, but Android applications may
+show an advertisement, modal, or layout update while the model is responding. After any required
+human confirmation and immediately before dispatching `Tap`, `Double Tap`, `Long Press`, or
+`Swipe`, the runtime obtains one fresh observation and applies optimistic concurrency control:
+
+1. Foreground application, system-panel state, and display dimensions must remain compatible.
+2. The image region around every action coordinate is compared with the planning screenshot.
+3. A near-full-screen replacement is a conservative fallback signal; ordinary video, carousel,
+   and feed motion cannot override an unchanged target region.
+4. Small unrelated animation outside the target region does not invalidate the action.
+
+An invalidated action is never sent to ADB and is not coordinate-adjusted heuristically. The
+runtime records a `precondition` event with `command_dispatched=false`, stores the fresh
+observation for the next planning step, and reports `pre_action_observation_changed`. A capture
+failure reports `pre_action_observation_failed` and enters bounded reobservation. A successful
+zero-touch replan closes that individual failure episode; total recoveries, steps, and runtime
+still bound a continuously changing interface. This reduces, but cannot mathematically eliminate,
+the residual interval between the final screenshot and the atomic ADB command.
+
 Cancellation is propagated through the active model stream and bounded waits. A synchronous
 stream has a request-local watcher that closes it when cancellation is requested; a native
 async stream is cancelled and closed by the orchestration task. `Wait` uses the same
@@ -203,9 +224,10 @@ recovery branches; the model can select explicit navigation actions after a fres
 Trajectory schema version remains `1.0` through the PhoneAgent `v0.2.0` refactor, so existing
 `v0.1.4` runs remain readable.
 
-Each event contains its type, timestamp, message, payload, and optional top-level step. The
-final state snapshot is included for convenience, but the event stream is authoritative for
-execution history.
+Each event contains its type, timestamp, message, payload, and optional top-level step. Pre-action
+checks additionally record capture age, target/global difference ratios, dispatch authorization,
+and whether a command had been sent at the time of the event. The final state snapshot is included
+for convenience, but the event stream is authoritative for execution history.
 
 Trajectories may contain task text, model content, packages, timestamps, action parameters,
 and evidence. They must be reviewed and redacted before publication.
