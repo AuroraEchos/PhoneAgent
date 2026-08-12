@@ -322,6 +322,9 @@ uv run phoneagent-eval runs \
 耗时与 Token。评测流程和标注格式见 [`docs/EVALUATION.md`](docs/EVALUATION.md)，发布前的
 真机回归步骤和记录表见 [`docs/REAL_DEVICE_REGRESSION.md`](docs/REAL_DEVICE_REGRESSION.md)。
 
+如果要系统理解项目设计、准备简历描述和技术面试，可以从
+[`docs/INTERVIEW_GUIDE.md`](docs/INTERVIEW_GUIDE.md) 开始。
+
 ## 开发
 
 ```bash

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 from types import SimpleNamespace
 
@@ -207,8 +208,6 @@ def test_sync_stream_is_closed_when_request_is_cancelled() -> None:
 
 
 def test_async_transport_uses_the_same_response_and_usage_semantics() -> None:
-    import asyncio
-
     async def exercise() -> None:
         completions = _FakeAsyncCompletions(
             [
@@ -239,6 +238,65 @@ def test_async_transport_uses_the_same_response_and_usage_semantics() -> None:
         assert completions.stream.closed is True
 
     asyncio.run(exercise())
+
+
+def test_async_protocol_error_preserves_truncation_diagnostics() -> None:
+    async def exercise() -> ModelProtocolError:
+        completions = _FakeAsyncCompletions(
+            [
+                _chunk(
+                    content='do(action="Back"',
+                    finish_reason="length",
+                    usage={"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150},
+                )
+            ]
+        )
+        client = AsyncOpenAIModelClient(
+            ModelConfig(capture_usage=True, max_retries=0)
+        )
+        await client.client.close()
+        client.client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+        with pytest.raises(ModelProtocolError) as captured:
+            await client.request([{"role": "user", "content": "test"}], print_stream=False)
+        assert completions.stream.closed is True
+        return captured.value
+
+    error = asyncio.run(exercise())
+
+    assert error.finish_reason == "length"
+    assert error.truncated is True
+    assert error.raw_content == 'do(action="Back"'
+    assert error.metrics["prompt_tokens"] == 120
+    assert error.metrics["completion_tokens"] == 30
+    assert error.metrics["total_tokens"] == 150
+    assert error.metrics["total_time"] is not None
+
+
+def test_sync_and_async_transports_share_pre_request_cancellation_outcome() -> None:
+    cancel_event = threading.Event()
+    cancel_event.set()
+    sync_client = ModelClient(ModelConfig(capture_usage=False, max_retries=0))
+    sync_client.client.close()
+
+    with pytest.raises(ModelRequestCancelled):
+        sync_client.request(
+            [{"role": "user", "content": "test"}],
+            print_stream=False,
+            cancel_event=cancel_event,
+        )
+
+    async def exercise_async() -> None:
+        async_client = AsyncOpenAIModelClient(ModelConfig(capture_usage=False, max_retries=0))
+        await async_client.client.close()
+        with pytest.raises(ModelRequestCancelled):
+            await async_client.request(
+                [{"role": "user", "content": "test"}],
+                print_stream=False,
+                cancel_event=cancel_event,
+            )
+
+    asyncio.run(exercise_async())
 
 
 @pytest.mark.parametrize(

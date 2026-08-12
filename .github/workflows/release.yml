@@ -51,6 +51,9 @@ jobs:
       - name: Build distributions
         run: uv build
 
+      - name: Check installed wheel
+        run: bash scripts/check_wheel.sh
+
       - name: Generate checksums
         run: |
           cd dist

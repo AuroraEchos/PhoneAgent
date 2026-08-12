@@ -21,13 +21,11 @@ from webui.server import ConsoleHTTPServer
 _urlopen = build_opener(ProxyHandler({})).open
 
 
-def _wait_for(predicate, timeout: float = 2.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return
-        time.sleep(0.01)
-    raise AssertionError("Timed out waiting for background web console state")
+def _wait_for(runtime: ConsoleRuntime, predicate, timeout: float = 2.0) -> None:
+    with runtime._condition:
+        completed = runtime._condition.wait_for(predicate, timeout=timeout)
+    if not completed:
+        raise AssertionError("Timed out waiting for background web console state")
 
 
 class _FakeState:
@@ -226,7 +224,7 @@ def test_console_checks_once_and_reuses_agent_for_tasks(tmp_path: Path) -> None:
         model_checker=model_checker,
     )
     assert runtime.start_checks() is True
-    _wait_for(lambda: runtime.snapshot()["startup"]["status"] == "ready")
+    _wait_for(runtime, lambda: runtime.snapshot()["startup"]["status"] == "ready")
 
     startup = runtime.snapshot()["startup"]
     statuses = {item["id"]: item["status"] for item in startup["checks"]}
@@ -240,9 +238,9 @@ def test_console_checks_once_and_reuses_agent_for_tasks(tmp_path: Path) -> None:
     assert startup["device_id"] == "test-device"
 
     runtime.start_task("first task")
-    _wait_for(lambda: runtime.snapshot()["task"]["status"] == "success")
+    _wait_for(runtime, lambda: runtime.snapshot()["task"]["status"] == "success")
     runtime.start_task("second task")
-    _wait_for(lambda: runtime.snapshot()["task"]["status"] == "success")
+    _wait_for(runtime, lambda: runtime.snapshot()["task"]["status"] == "success")
 
     assert len(created) == 1
     assert device_calls == 1
@@ -273,16 +271,16 @@ def test_sensitive_confirmation_round_trip(tmp_path: Path) -> None:
         model_checker=_model_check,
     )
     runtime.start_checks()
-    _wait_for(lambda: runtime.snapshot()["startup"]["status"] == "ready")
+    _wait_for(runtime, lambda: runtime.snapshot()["startup"]["status"] == "ready")
     runtime.start_task("place an order")
-    _wait_for(lambda: runtime.snapshot()["pending_prompt"] is not None)
+    _wait_for(runtime, lambda: runtime.snapshot()["pending_prompt"] is not None)
 
     snapshot = runtime.snapshot()
     assert snapshot["task"]["status"] == "waiting_user"
     prompt = snapshot["pending_prompt"]
     assert prompt["type"] == "confirmation"
     runtime.respond_prompt(prompt["id"], True)
-    _wait_for(lambda: runtime.snapshot()["task"]["status"] == "success")
+    _wait_for(runtime, lambda: runtime.snapshot()["task"]["status"] == "success")
 
     assert created[0].confirmed is True
     assert runtime.snapshot()["pending_prompt"] is None
@@ -304,15 +302,16 @@ def test_stale_agent_callback_cannot_mutate_the_next_task(tmp_path: Path) -> Non
         model_checker=_model_check,
     )
     runtime.start_checks()
-    _wait_for(lambda: runtime.snapshot()["startup"]["status"] == "ready")
+    _wait_for(runtime, lambda: runtime.snapshot()["startup"]["status"] == "ready")
     runtime.start_task("first task")
-    _wait_for(lambda: runtime.snapshot()["task"]["status"] == "success")
+    _wait_for(runtime, lambda: runtime.snapshot()["task"]["status"] == "success")
 
     runtime.start_task("second task")
     assert created[0].second_entered.wait(timeout=1)
     created[0].emit_stale.set()
     assert created[0].stale_emitted.wait(timeout=1)
     _wait_for(
+        runtime,
         lambda: runtime.snapshot()["task"]["last_thinking"]
         == "current second-task thinking"
     )
@@ -325,7 +324,7 @@ def test_stale_agent_callback_cannot_mutate_the_next_task(tmp_path: Path) -> Non
     )
 
     created[0].release_second.set()
-    _wait_for(lambda: runtime.snapshot()["task"]["status"] == "success")
+    _wait_for(runtime, lambda: runtime.snapshot()["task"]["status"] == "success")
     runtime.close()
 
 
@@ -344,13 +343,13 @@ def test_waiting_prompt_can_cancel_the_entire_task(tmp_path: Path) -> None:
         model_checker=_model_check,
     )
     runtime.start_checks()
-    _wait_for(lambda: runtime.snapshot()["startup"]["status"] == "ready")
+    _wait_for(runtime, lambda: runtime.snapshot()["startup"]["status"] == "ready")
     runtime.start_task("place an order")
-    _wait_for(lambda: runtime.snapshot()["pending_prompt"] is not None)
+    _wait_for(runtime, lambda: runtime.snapshot()["pending_prompt"] is not None)
 
     cancelling = runtime.cancel_task()
     assert cancelling["status"] == "cancelling"
-    _wait_for(lambda: runtime.snapshot()["task"]["status"] == "cancelled")
+    _wait_for(runtime, lambda: runtime.snapshot()["task"]["status"] == "cancelled")
 
     assert created[0].cancel_requested is True
     assert created[0].confirmed is False
@@ -410,7 +409,7 @@ def test_http_console_serves_frontend_and_accepts_task(tmp_path: Path) -> None:
         model_checker=_model_check,
     )
     runtime.start_checks()
-    _wait_for(lambda: runtime.snapshot()["startup"]["status"] == "ready")
+    _wait_for(runtime, lambda: runtime.snapshot()["startup"]["status"] == "ready")
     server = ConsoleHTTPServer(("127.0.0.1", 0), runtime)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -470,7 +469,7 @@ def test_http_console_serves_frontend_and_accepts_task(tmp_path: Path) -> None:
         )
         with _urlopen(request, timeout=2) as response:
             assert response.status == 202
-        _wait_for(lambda: runtime.snapshot()["task"]["status"] == "success")
+        _wait_for(runtime, lambda: runtime.snapshot()["task"]["status"] == "success")
 
         with _urlopen(f"{base_url}/api/state", timeout=2) as response:
             state = json.loads(response.read())
@@ -491,7 +490,7 @@ def test_http_console_cancels_task_waiting_for_confirmation(tmp_path: Path) -> N
         model_checker=_model_check,
     )
     runtime.start_checks()
-    _wait_for(lambda: runtime.snapshot()["startup"]["status"] == "ready")
+    _wait_for(runtime, lambda: runtime.snapshot()["startup"]["status"] == "ready")
     server = ConsoleHTTPServer(("127.0.0.1", 0), runtime)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -505,7 +504,7 @@ def test_http_console_cancels_task_waiting_for_confirmation(tmp_path: Path) -> N
         )
         with _urlopen(start_request, timeout=2) as response:
             assert response.status == 202
-        _wait_for(lambda: runtime.snapshot()["pending_prompt"] is not None)
+        _wait_for(runtime, lambda: runtime.snapshot()["pending_prompt"] is not None)
 
         cancel_request = Request(
             f"{base_url}/api/tasks/cancel",
@@ -517,7 +516,7 @@ def test_http_console_cancels_task_waiting_for_confirmation(tmp_path: Path) -> N
             payload = json.loads(response.read())
             assert response.status == 202
             assert payload["task"]["status"] == "cancelling"
-        _wait_for(lambda: runtime.snapshot()["task"]["status"] == "cancelled")
+        _wait_for(runtime, lambda: runtime.snapshot()["task"]["status"] == "cancelled")
     finally:
         server.shutdown()
         server.server_close()

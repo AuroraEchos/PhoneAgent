@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import threading
@@ -205,6 +206,42 @@ class FailingTapDevice(FakeDevice):
         del x, y
         self.tap_attempts += 1
         raise ConnectionError("injected ADB disconnect")
+
+
+def test_public_async_run_and_step_match_terminal_sync_contract(tmp_path) -> None:
+    async def exercise() -> None:
+        config = AgentConfig(
+            max_steps=1,
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+            verification=VerificationConfig(settle_delay_seconds=0, observation_retries=0),
+        )
+        response = ModelResponse(
+            thinking="done",
+            action='finish(message="done", success=True)',
+            raw_content='finish(message="done", success=True)',
+        )
+        run_agent = PhoneAgent(
+            agent_config=config,
+            device=FakeDevice(),
+            model_client=FakeModelClient([response]),
+        )
+        step_agent = PhoneAgent(
+            agent_config=config,
+            device=FakeDevice(),
+            model_client=FakeModelClient([copy.deepcopy(response)]),
+        )
+
+        assert await run_agent.run_async("inspect screen") == "done"
+        step_result = await step_agent.step_async("inspect screen")
+
+        assert step_result.success is True
+        assert step_result.finished is True
+        assert step_result.message == "done"
+        assert run_agent.state.phase.value == "completed"
+        assert step_agent.state.phase.value == "completed"
+
+    asyncio.run(exercise())
 
 
 def test_agent_loop_reuses_verified_observation_and_finishes(tmp_path) -> None:

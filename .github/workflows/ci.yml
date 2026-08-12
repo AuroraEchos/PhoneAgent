@@ -42,3 +42,6 @@ jobs:
 
       - name: Build distributions
         run: uv run python -m build
+
+      - name: Check installed wheel
+        run: bash scripts/check_wheel.sh
