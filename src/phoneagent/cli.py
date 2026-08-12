@@ -25,7 +25,7 @@ from phoneagent.adb.screenshot import ScreenshotCaptureError, get_screenshot
 from phoneagent.config.apps import list_supported_apps
 from phoneagent.devices import AndroidDevice
 from phoneagent.model import ModelConfig
-from phoneagent.runtime import RecoveryConfig, VerificationConfig
+from phoneagent.runtime import FreshnessConfig, RecoveryConfig, VerificationConfig
 
 # ============================================================================
 # Logging Setup
@@ -265,6 +265,11 @@ Examples:
         action="store_true",
         help="Disable automatic recovery and abort on first recoverable failure"
     )
+    verification_group.add_argument(
+        "--disable-pre-action-freshness",
+        action="store_true",
+        help="Disable the coordinate-action freshness guard (diagnostic only)"
+    )
 
     # Hidden/advanced options
     _add_hidden_options(parser)
@@ -318,6 +323,8 @@ def _add_hidden_options(parser: argparse.ArgumentParser) -> None:
         ("max-repeated-actions", DEFAULT_MAX_REPEATED_ACTIONS, "MAX_REPEATED_ACTIONS", None),
         ("context-turns", DEFAULT_CONTEXT_TURNS, "CONTEXT_TURNS", None),
         ("observation-retries", DEFAULT_OBSERVATION_RETRIES, "OBSERVATION_RETRIES", None),
+        ("protocol-retries", 1, "PROTOCOL_RETRIES", None),
+        ("protocol-retry-max-tokens", 512, "PROTOCOL_RETRY_MAX_TOKENS", None),
         ("verification-retries", DEFAULT_VERIFICATION_RETRIES, "VERIFICATION_RETRIES", None),
         ("verification-threshold", DEFAULT_VERIFICATION_THRESHOLD, "VERIFICATION_THRESHOLD", None),
         ("max-recoveries", DEFAULT_MAX_RECOVERIES, "MAX_RECOVERIES", None),
@@ -378,6 +385,11 @@ def _build_cli_config(args: argparse.Namespace) -> CLIConfig:
             trajectory_dir=args.trajectory_dir,
             allow_fallback_screenshot=args.allow_fallback_screenshot,
             app_launch_timeout_seconds=args.app_launch_timeout_seconds,
+            protocol_retries=args.protocol_retries,
+            protocol_retry_max_tokens=args.protocol_retry_max_tokens,
+            freshness=FreshnessConfig(
+                enabled=not args.disable_pre_action_freshness,
+            ),
             verification=VerificationConfig(
                 enabled=not args.disable_verification,
                 observation_retries=args.verification_retries,

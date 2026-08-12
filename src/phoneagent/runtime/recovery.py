@@ -106,17 +106,25 @@ class RecoveryManager:
         "api_callback_not_configured",
         "empty_api_instruction",
         "empty_note",
+        "pre_action_observation_changed",
     }
     _OBSERVATION_ERRORS = {
         "observation_failed",
         "screenshot_unavailable",
         "verification_observation_failed",
         "device_unavailable",
+        "pre_action_observation_failed",
     }
     _MODEL_PROTOCOL_ERRORS = {
         "action_parse_error",
+        "incomplete_action",
+        "invalid_action_arguments",
+        "legacy_action_envelope",
+        "missing_action",
         "model_output_truncated",
         "model_protocol_error",
+        "multiple_actions",
+        "trailing_content",
     }
     _SAFE_RETRY_ACTIONS = {"Launch", "Wait", "Home"}
 

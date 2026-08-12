@@ -17,6 +17,8 @@ def test_env_example_uses_current_lazy_launch_configuration() -> None:
     assert "APP_LAUNCH_TIMEOUT_SECONDS=15" in env_example
     assert "WEB_HOST=127.0.0.1" in env_example
     assert "WEB_PORT=8765" in env_example
+    assert "PROTOCOL_RETRIES=1" in env_example
+    assert "PROTOCOL_RETRY_MAX_TOKENS=512" in env_example
     assert "APP_ALIASES_FILE" not in env_example
     assert "APP_CATALOG_TTL" not in env_example
     assert "MAX_APP_CONTEXT_CHARS" not in env_example
@@ -29,6 +31,30 @@ def test_cli_reads_lazy_launch_timeout_from_environment(monkeypatch) -> None:
     monkeypatch.setattr(sys, "argv", ["phoneagent"])
 
     assert parse_args().app_launch_timeout_seconds == 8.25
+
+
+def test_cli_pre_action_freshness_is_default_on_with_diagnostic_opt_out(
+    monkeypatch,
+) -> None:
+    from phoneagent.cli import parse_args
+
+    monkeypatch.setattr(sys, "argv", ["phoneagent"])
+    assert parse_args().disable_pre_action_freshness is False
+
+    monkeypatch.setattr(sys, "argv", ["phoneagent", "--disable-pre-action-freshness"])
+    assert parse_args().disable_pre_action_freshness is True
+
+
+def test_cli_reads_protocol_retry_limits_from_environment(monkeypatch) -> None:
+    from phoneagent.cli import parse_args
+
+    monkeypatch.setenv("PROTOCOL_RETRIES", "2")
+    monkeypatch.setenv("PROTOCOL_RETRY_MAX_TOKENS", "384")
+    monkeypatch.setattr(sys, "argv", ["phoneagent"])
+
+    args = parse_args()
+    assert args.protocol_retries == 2
+    assert args.protocol_retry_max_tokens == 384
 
 
 def test_importing_package_does_not_load_dotenv(tmp_path) -> None:

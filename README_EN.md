@@ -25,6 +25,8 @@ failure behavior over broad workflow integrations or app-specific capabilities.
 - One complete terminal `do(...)` or `finish(...)` call is the only executable model-output
   region; preceding text is reasoning, while XML, multiple calls, trailing text, and malformed
   output are rejected.
+- Model content is action-only by default. The first protocol failure receives one bounded retry
+  in the same Agent step, with no device command and no recovery-budget charge.
 - No heuristic repair of JSON, Markdown code fences, multiple actions, or incomplete strings.
 - AST parsing, an action allow-list, parameter validation, and explicit confirmation for
   sensitive operations.
@@ -37,6 +39,9 @@ failure behavior over broad workflow integrations or app-specific capabilities.
   trajectory.
 - Cancellation closes the active model stream and wakes bounded waits; already-dispatched ADB
   input remains atomic and no later action is issued.
+- After confirmation and immediately before ADB dispatch, coordinate actions reobserve the
+  screen. A changed target region or broad layout invalidates the old action with zero touch,
+  retains the fresh observation for replanning, and records the conflict as a precondition event.
 - Content-region fingerprints drive stagnation checks, and coordinate repetition applies only
   to actions that actually contain coordinates.
 - Five recovery outcomes only: replan, reobserve, retry a safe action, request takeover, or
@@ -47,6 +52,12 @@ failure behavior over broad workflow integrations or app-specific capabilities.
 Only `Launch`, `Wait`, and `Home` may receive one automatic retry when the action is not
 marked sensitive. Side-effecting or navigation actions such as `Tap`, `Type`, `Swipe`, and
 `Back` are not replayed automatically.
+
+Action arguments use a closed schema. Unknown fields, duplicate keywords, and missing required
+arguments are rejected before execution.
+
+The pre-action freshness guard is enabled by default for `Tap`, `Double Tap`, `Long Press`, and
+`Swipe`. `--disable-pre-action-freshness` is available for diagnostics only.
 
 ## Requirements
 

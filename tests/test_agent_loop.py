@@ -208,6 +208,24 @@ class FailingTapDevice(FakeDevice):
         raise ConnectionError("injected ADB disconnect")
 
 
+class PreActionRaceDevice(FakeDevice):
+    def __init__(self) -> None:
+        super().__init__()
+        self.observe_calls = 0
+
+    def observe(self):
+        self.observe_calls += 1
+        # The model plans against 10; a popup/layout change appears before dispatch.
+        value = 10 if self.observe_calls == 1 else 80
+        return make_observation(value, app="Example", package="com.example")
+
+
+class ContinuouslyChangingDevice(FakeDevice):
+    def observe(self):
+        self.screen_value += 20
+        return make_observation(self.screen_value, app="Example", package="com.example")
+
+
 def test_public_async_run_and_step_match_terminal_sync_contract(tmp_path) -> None:
     async def exercise() -> None:
         config = AgentConfig(
@@ -288,6 +306,152 @@ def test_agent_loop_reuses_verified_observation_and_finishes(tmp_path) -> None:
     )
     assert verification["observable_effect_verified"] is True
     assert verification["semantic_effect_verified"] is None
+    precondition = next(
+        event["payload"] for event in trajectory["events"] if event["type"] == "precondition"
+    )
+    assert precondition["fresh"] is True
+
+
+def test_pre_action_screen_change_invalidates_tap_without_dispatch(tmp_path) -> None:
+    device = PreActionRaceDevice()
+    model = FakeModelClient(
+        [
+            ModelResponse(
+                thinking="tap the target from the old screenshot",
+                action='do(action="Tap", element=[500, 500])',
+                raw_content='do(action="Tap", element=[500, 500])',
+            ),
+            ModelResponse(
+                thinking="the screen changed, stop safely",
+                action='finish(message="replanned", success=True)',
+                raw_content='finish(message="replanned", success=True)',
+            ),
+        ]
+    )
+    agent = PhoneAgent(
+        agent_config=AgentConfig(
+            max_steps=3,
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+            verification=VerificationConfig(settle_delay_seconds=0, observation_retries=0),
+            recovery=RecoveryConfig(retry_delay_seconds=0),
+        ),
+        device=device,
+        model_client=model,
+    )
+
+    assert agent.run("tap the target") == "replanned"
+    assert device.taps == []
+    assert len(model.requests) == 2
+    precondition = next(
+        event for event in agent.trajectory.events if event["type"] == "precondition"
+    )
+    assert precondition["payload"]["fresh"] is False
+    assert precondition["payload"]["reason"] == "target_region_changed"
+    assert precondition["payload"]["command_dispatched"] is False
+    stale_error = next(
+        event
+        for event in agent.trajectory.events
+        if event["type"] == "error"
+        and event["payload"]["error_code"] == "pre_action_observation_changed"
+    )
+    assert stale_error["payload"]["metadata"]["command_dispatched"] is False
+    tap_executions = [
+        event
+        for event in agent.trajectory.events
+        if event["type"] == "execution"
+        and event["payload"].get("action", {}).get("action") == "Tap"
+    ]
+    assert tap_executions == []
+    assert "pre_action_observation_changed" in str(model.requests[1])
+
+
+def test_confirmation_happens_before_pre_action_freshness_guard(tmp_path) -> None:
+    device = FakeDevice()
+
+    def confirm(_message: str) -> bool:
+        device.screen_value = 80
+        return True
+
+    model = FakeModelClient(
+        [
+            ModelResponse(
+                thinking="confirmed tap",
+                action=(
+                    'do(action="Tap", element=[500, 500], '
+                    'sensitive=True, message="confirm")'
+                ),
+                raw_content=(
+                    'do(action="Tap", element=[500, 500], '
+                    'sensitive=True, message="confirm")'
+                ),
+            ),
+            ModelResponse(
+                thinking="screen changed during confirmation",
+                action='finish(message="safe", success=True)',
+                raw_content='finish(message="safe", success=True)',
+            ),
+        ]
+    )
+    agent = PhoneAgent(
+        agent_config=AgentConfig(
+            max_steps=3,
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+            verification=VerificationConfig(settle_delay_seconds=0, observation_retries=0),
+            recovery=RecoveryConfig(retry_delay_seconds=0),
+        ),
+        confirmation_callback=confirm,
+        device=device,
+        model_client=model,
+    )
+
+    assert agent.run("perform confirmed tap") == "safe"
+    assert device.taps == []
+    precondition = next(
+        event for event in agent.trajectory.events if event["type"] == "precondition"
+    )
+    assert precondition["payload"]["fresh"] is False
+
+
+def test_successful_zero_touch_replans_do_not_exhaust_per_failure_budget(tmp_path) -> None:
+    device = ContinuouslyChangingDevice()
+    tap = ModelResponse(
+        thinking="tap only if the current visual precondition still holds",
+        action='do(action="Tap", element=[500, 500])',
+        raw_content='do(action="Tap", element=[500, 500])',
+    )
+    finish_response = ModelResponse(
+        thinking="stop after exercising repeated visual conflicts",
+        action='finish(message="bounded by the run budget", success=True)',
+        raw_content='finish(message="bounded by the run budget", success=True)',
+    )
+    agent = PhoneAgent(
+        agent_config=AgentConfig(
+            max_steps=6,
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+            verification=VerificationConfig(settle_delay_seconds=0, observation_retries=0),
+            recovery=RecoveryConfig(
+                max_total_recoveries=8,
+                max_attempts_per_failure=2,
+                retry_delay_seconds=0,
+            ),
+        ),
+        device=device,
+        model_client=FakeModelClient([tap, tap, tap, tap, finish_response]),
+    )
+
+    assert agent.run("exercise repeated races") == "bounded by the run budget"
+    assert device.taps == []
+    stale_checks = [
+        event
+        for event in agent.trajectory.events
+        if event["type"] == "precondition" and not event["payload"]["fresh"]
+    ]
+    assert len(stale_checks) == 4
+    assert agent.state.recovery_count == 4
+    assert agent.state.consecutive_failures == 0
 
 
 def test_quick_settings_falls_back_inside_runtime_after_no_ui_effect(tmp_path) -> None:

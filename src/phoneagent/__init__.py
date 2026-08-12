@@ -15,6 +15,7 @@ __all__ = [
     "__version__",
     "AgentConfig",
     "AgentPhase",
+    "FreshnessConfig",
     "PhoneAgent",
     "RecoveryConfig",
     "StepResult",
@@ -32,11 +33,17 @@ def __getattr__(name: str) -> Any:
             "PhoneAgent": PhoneAgent,
             "StepResult": StepResult,
         }[name]
-    if name in {"AgentPhase", "RecoveryConfig", "VerificationConfig"}:
-        from phoneagent.runtime import AgentPhase, RecoveryConfig, VerificationConfig
+    if name in {"AgentPhase", "FreshnessConfig", "RecoveryConfig", "VerificationConfig"}:
+        from phoneagent.runtime import (
+            AgentPhase,
+            FreshnessConfig,
+            RecoveryConfig,
+            VerificationConfig,
+        )
 
         return {
             "AgentPhase": AgentPhase,
+            "FreshnessConfig": FreshnessConfig,
             "RecoveryConfig": RecoveryConfig,
             "VerificationConfig": VerificationConfig,
         }[name]

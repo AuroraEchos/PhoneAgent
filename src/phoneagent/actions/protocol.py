@@ -54,6 +54,50 @@ _COORDINATE_ACTION_FIELDS: dict[str, tuple[str, ...]] = {
     "Swipe": ("start", "end"),
 }
 
+_COMMON_ACTION_FIELDS = {
+    "description",
+    "message",
+    "sensitive",
+    "requires_confirmation",
+    "risk_level",
+}
+_ACTION_REQUIRED_FIELDS: dict[str, frozenset[str]] = {
+    "Launch": frozenset({"app"}),
+    "Tap": frozenset({"element"}),
+    "Type": frozenset({"text"}),
+    "Swipe": frozenset({"start", "end"}),
+    "Back": frozenset(),
+    "Home": frozenset(),
+    "OpenNotifications": frozenset(),
+    "OpenQuickSettings": frozenset(),
+    "CloseSystemPanel": frozenset(),
+    "Double Tap": frozenset({"element"}),
+    "Long Press": frozenset({"element"}),
+    "Wait": frozenset(),
+    "Take_over": frozenset({"message"}),
+    "Interact": frozenset({"message"}),
+    "Note": frozenset({"message"}),
+    "Call_API": frozenset({"instruction"}),
+}
+_ACTION_SPECIFIC_FIELDS: dict[str, frozenset[str]] = {
+    "Launch": frozenset({"app"}),
+    "Tap": frozenset({"element"}),
+    "Type": frozenset({"text", "clear"}),
+    "Swipe": frozenset({"start", "end", "duration_ms"}),
+    "Back": frozenset(),
+    "Home": frozenset(),
+    "OpenNotifications": frozenset(),
+    "OpenQuickSettings": frozenset(),
+    "CloseSystemPanel": frozenset(),
+    "Double Tap": frozenset({"element"}),
+    "Long Press": frozenset({"element", "duration_ms"}),
+    "Wait": frozenset({"duration"}),
+    "Take_over": frozenset(),
+    "Interact": frozenset(),
+    "Note": frozenset(),
+    "Call_API": frozenset({"instruction"}),
+}
+
 
 def do(**kwargs: Any) -> dict[str, Any]:
     """Create a model-style executable action dictionary."""
@@ -96,6 +140,12 @@ def validate_action(action: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(action)
     metadata = normalized.get("_metadata")
     if metadata == "finish":
+        unknown = set(normalized) - {"_metadata", "message", "success"}
+        if unknown:
+            raise ActionParseError(
+                "finish(...) contains unsupported keyword(s): "
+                + ", ".join(sorted(unknown))
+            )
         message = normalized.get("message", "Task completed")
         if not isinstance(message, str):
             message = str(message)
@@ -118,6 +168,23 @@ def validate_action(action: dict[str, Any]) -> dict[str, Any]:
         raise ActionParseError(f"Unsupported action {raw_name!r}. Supported: {supported}")
     normalized["action"] = canonical
 
+    allowed = {
+        "_metadata",
+        "action",
+        *_COMMON_ACTION_FIELDS,
+        *_ACTION_SPECIFIC_FIELDS[canonical],
+    }
+    unknown = set(normalized) - allowed
+    if unknown:
+        raise ActionParseError(
+            f"{canonical} contains unsupported keyword(s): " + ", ".join(sorted(unknown))
+        )
+    missing = _ACTION_REQUIRED_FIELDS[canonical] - set(normalized)
+    if missing:
+        raise ActionParseError(
+            f"{canonical} is missing required keyword(s): " + ", ".join(sorted(missing))
+        )
+
     for field_name in _COORDINATE_ACTION_FIELDS.get(canonical, ()):
         normalized[field_name] = _validate_relative_coordinate(
             normalized.get(field_name), field_name
@@ -130,7 +197,7 @@ def validate_action(action: dict[str, Any]) -> dict[str, Any]:
         normalized["app"] = app.strip()
 
     elif canonical == "Type":
-        text = normalized.get("text", "")
+        text = normalized["text"]
         if not isinstance(text, str):
             text = str(text)
         if len(text) > 20_000:
@@ -146,6 +213,22 @@ def validate_action(action: dict[str, Any]) -> dict[str, Any]:
         duration = normalized.get("duration", "1 second")
         if not isinstance(duration, (str, int, float)):
             raise ActionParseError("Wait duration must be a number or duration string")
+
+    elif canonical in {"Take_over", "Interact", "Note"}:
+        message = normalized.get("message")
+        if not isinstance(message, str) or not message.strip():
+            raise ActionParseError(f"{canonical} requires a non-empty message")
+        normalized["message"] = message.strip()
+
+    elif canonical == "Call_API":
+        instruction = normalized.get("instruction")
+        if not isinstance(instruction, str) or not instruction.strip():
+            raise ActionParseError("Call_API requires a non-empty instruction")
+        normalized["instruction"] = instruction.strip()
+
+    for text_field in ("description", "message"):
+        if text_field in normalized and not isinstance(normalized[text_field], str):
+            raise ActionParseError(f"{text_field} must be a string")
 
     for flag in ("sensitive", "requires_confirmation"):
         if flag in normalized and not isinstance(normalized[flag], bool):
@@ -215,9 +298,13 @@ def _parse_do_call(call_text: str) -> dict[str, Any]:
         raise ActionParseError("Positional arguments are not allowed in do(...)")
 
     action: dict[str, Any] = {"_metadata": "do"}
+    seen: set[str] = set()
     for keyword in call.keywords:
         if keyword.arg is None:
             raise ActionParseError("**kwargs is not allowed in action calls")
+        if keyword.arg in seen:
+            raise ActionParseError(f"Duplicate action keyword: {keyword.arg}")
+        seen.add(keyword.arg)
         try:
             action[keyword.arg] = ast.literal_eval(keyword.value)
         except (ValueError, TypeError) as exc:
@@ -239,9 +326,13 @@ def _parse_finish_call(call_text: str) -> dict[str, Any]:
         "message": "Task completed",
         "success": True,
     }
+    seen: set[str] = set()
     for keyword in call.keywords:
         if keyword.arg is None:
             raise ActionParseError("**kwargs is not allowed in finish calls")
+        if keyword.arg in seen:
+            raise ActionParseError(f"Duplicate finish keyword: {keyword.arg}")
+        seen.add(keyword.arg)
         try:
             parsed[keyword.arg] = ast.literal_eval(keyword.value)
         except (ValueError, TypeError) as exc:

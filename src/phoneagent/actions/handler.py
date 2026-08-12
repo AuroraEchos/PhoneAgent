@@ -79,8 +79,30 @@ class ActionHandler:
             return f"{type(exc).__name__}: {exc}"
         return None
 
+    def request_confirmation(self, action: dict[str, Any]) -> ActionResult | None:
+        """Ask for confirmation without dispatching the validated action."""
+        try:
+            action = validate_action(action)
+        except ActionParseError as exc:
+            return ActionResult(False, False, str(exc), error_code="invalid_action")
+        message = self._confirmation_message(action)
+        if message and not self.confirmation_callback(message):
+            return ActionResult(
+                False,
+                True,
+                "User cancelled sensitive operation",
+                requires_confirmation=True,
+                error_code="user_cancelled",
+            )
+        return None
+
     def execute(
-        self, action: dict[str, Any], screen_width: int, screen_height: int
+        self,
+        action: dict[str, Any],
+        screen_width: int,
+        screen_height: int,
+        *,
+        confirmation_checked: bool = False,
     ) -> ActionResult:
         try:
             action = validate_action(action)
@@ -120,16 +142,10 @@ class ActionHandler:
             "Call_API": self._handle_call_api,
         }
 
-        confirmation_message = self._confirmation_message(action)
-        if confirmation_message:
-            if not self.confirmation_callback(confirmation_message):
-                return ActionResult(
-                    False,
-                    True,
-                    "User cancelled sensitive operation",
-                    requires_confirmation=True,
-                    error_code="user_cancelled",
-                )
+        if not confirmation_checked:
+            confirmation_result = self.request_confirmation(action)
+            if confirmation_result is not None:
+                return confirmation_result
 
         try:
             return handlers[action_name](action, screen_width, screen_height)

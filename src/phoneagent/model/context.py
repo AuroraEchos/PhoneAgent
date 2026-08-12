@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from typing import Any
 
@@ -84,6 +85,34 @@ def prepare_protocol_recovery(
         f"{coordinate_hint}"
         "Use the current screen and user goal. Do not copy placeholder values."
     )
+
+
+def build_protocol_retry_context(
+    messages: list[dict[str, Any]],
+    *,
+    reason: str,
+) -> list[dict[str, Any]]:
+    """Build one ephemeral, screenshot-preserving action-only retry context."""
+    retry_messages = deepcopy(messages)
+    instruction = (
+        "** PROTOCOL RETRY **\n"
+        f"The previous response was rejected: {reason}.\n"
+        "Re-evaluate the current screenshot and user goal. Response content must contain "
+        "exactly one complete do(...) or finish(...) call and nothing else. Do not repeat "
+        "analysis, do not use Markdown/XML/JSON, and do not guess missing coordinates from "
+        "the rejected text."
+    )
+    if retry_messages and retry_messages[-1].get("role") == "user":
+        content = retry_messages[-1].get("content")
+        if isinstance(content, list):
+            content.append({"type": "text", "text": instruction})
+        elif isinstance(content, str):
+            retry_messages[-1]["content"] = content + "\n\n" + instruction
+        else:
+            retry_messages[-1]["content"] = instruction
+    else:
+        retry_messages.append(MessageBuilder.create_user_message(text=instruction))
+    return retry_messages
 
 
 def compact_for_protocol_recovery(

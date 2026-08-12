@@ -69,6 +69,23 @@ class _ProtocolThenFinishModel:
         return _FinishModel().request(messages, print_stream=print_stream)
 
 
+class _InvalidArgumentsThenFinishModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def request(self, messages, *, print_stream=True):  # noqa: ANN001
+        del messages, print_stream
+        self.calls += 1
+        if self.calls == 1:
+            raw = 'do(action="Back", unexpected="value")'
+            return ModelResponse(thinking="", action=raw, raw_content=raw)
+        return ModelResponse(
+            thinking="",
+            action='finish(message="done", success=True)',
+            raw_content='finish(message="done", success=True)',
+        )
+
+
 class RuntimeCoreTests(unittest.TestCase):
     def test_state_has_single_phase_source(self) -> None:
         state = AgentState()
@@ -224,10 +241,10 @@ class RuntimeCoreTests(unittest.TestCase):
         self.assertTrue(all("step" not in event["payload"] for event in phase_events))
         self.assertTrue(all("timestamp" not in event["payload"] for event in phase_events))
 
-    def test_model_protocol_error_enters_strict_action_recovery(self) -> None:
+    def test_model_protocol_error_uses_same_step_action_only_retry(self) -> None:
         model = _ProtocolThenFinishModel()
         agent = PhoneAgent(
-            model_config=ModelConfig(),
+            model_config=ModelConfig(max_tokens=256),
             agent_config=AgentConfig(
                 save_trajectory=False,
                 verbose=False,
@@ -240,7 +257,9 @@ class RuntimeCoreTests(unittest.TestCase):
 
         self.assertEqual(agent.run("测试任务"), "done")
         self.assertEqual(model.calls, 2)
-        self.assertIn("STRICT ACTION RECOVERY", str(model.messages[1][-1]["content"]))
+        self.assertEqual(agent.step_count, 1)
+        self.assertEqual(agent.state.recovery_count, 0)
+        self.assertIn("PROTOCOL RETRY", str(model.messages[1][-1]["content"]))
 
         response_events = [
             event
@@ -252,10 +271,17 @@ class RuntimeCoreTests(unittest.TestCase):
             '先返回上一页 do(action="Back")',
         )
         self.assertIn("protocol_error", response_events[0]["payload"])
-        error_events = [
-            event for event in agent.trajectory.events if event["type"] == EventType.ERROR.value
+        retry_events = [
+            event
+            for event in agent.trajectory.events
+            if event["type"] == EventType.PROTOCOL_RETRY.value
         ]
-        self.assertEqual(error_events[0]["payload"]["error_code"], "model_protocol_error")
+        self.assertEqual(len(retry_events), 1)
+        self.assertFalse(retry_events[0]["payload"]["command_dispatched"])
+        self.assertEqual(retry_events[0]["payload"]["max_tokens"], 256)
+        self.assertFalse(
+            any(event["type"] == EventType.ERROR.value for event in agent.trajectory.events)
+        )
 
     def test_truncated_protocol_error_is_reported_separately(self) -> None:
         model = _ProtocolThenFinishModel(finish_reason="length")
@@ -279,10 +305,57 @@ class RuntimeCoreTests(unittest.TestCase):
         ]
         self.assertEqual(response_events[0]["payload"]["finish_reason"], "length")
         self.assertTrue(response_events[0]["payload"]["truncated"])
-        error_events = [
-            event for event in agent.trajectory.events if event["type"] == EventType.ERROR.value
+        retry_events = [
+            event
+            for event in agent.trajectory.events
+            if event["type"] == EventType.PROTOCOL_RETRY.value
         ]
-        self.assertEqual(error_events[0]["payload"]["error_code"], "model_output_truncated")
+        self.assertEqual(len(retry_events), 1)
+        self.assertFalse(
+            any(event["type"] == EventType.ERROR.value for event in agent.trajectory.events)
+        )
+
+    def test_exhausted_protocol_retry_enters_existing_strict_recovery(self) -> None:
+        model = _ProtocolThenFinishModel()
+        agent = PhoneAgent(
+            model_config=ModelConfig(),
+            agent_config=AgentConfig(
+                save_trajectory=False,
+                verbose=False,
+                max_steps=3,
+                protocol_retries=0,
+                recovery=RecoveryConfig(retry_delay_seconds=0),
+            ),
+            device=_FakeDevice(),  # type: ignore[arg-type]
+            model_client=model,  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(agent.run("测试任务"), "done")
+        self.assertEqual(agent.step_count, 2)
+        self.assertIn("STRICT ACTION RECOVERY", str(model.messages[1][-1]["content"]))
+        error = next(
+            event for event in agent.trajectory.events if event["type"] == EventType.ERROR.value
+        )
+        self.assertEqual(error["payload"]["error_code"], "model_protocol_error")
+
+    def test_invalid_inner_action_schema_uses_same_step_retry(self) -> None:
+        model = _InvalidArgumentsThenFinishModel()
+        agent = PhoneAgent(
+            model_config=ModelConfig(),
+            agent_config=AgentConfig(save_trajectory=False, verbose=False, max_steps=1),
+            device=_FakeDevice(),  # type: ignore[arg-type]
+            model_client=model,  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(agent.run("测试任务"), "done")
+        self.assertEqual(model.calls, 2)
+        self.assertEqual(agent.step_count, 1)
+        retry = next(
+            event
+            for event in agent.trajectory.events
+            if event["type"] == EventType.PROTOCOL_RETRY.value
+        )
+        self.assertEqual(retry["payload"]["protocol_error_code"], "invalid_action_arguments")
 
 
 if __name__ == "__main__":
