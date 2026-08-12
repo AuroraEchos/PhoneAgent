@@ -4,7 +4,8 @@ Use this checklist for a tagged PhoneAgent release.
 
 1. Confirm that `.env`, device screenshots, private trajectories, and local archives are not tracked.
 2. Run `uv lock --check`, `uv run ruff check .`, `uv run pytest -q`, and `uv build`.
-3. Syntax-check every `webui/static/*.js` file as an ES module and exercise the HTTP static routes.
+3. Syntax-check every `webui/static/*.js` file as an ES module, check the project-site script,
+   and exercise the HTTP static routes.
 4. Verify branch-aware coverage for action protocol, state, verification, recovery, and trajectory
    modules, with explicit fault cases for observation timeout, ADB disconnect, model cancellation,
    foreground mismatch, and stale Web callbacks.

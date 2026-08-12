@@ -31,6 +31,7 @@ echo "[5/9] Checking Web Console modules"
 for file in webui/static/*.js; do
   node --input-type=module --check < "$file"
 done
+node --check docs/script.js
 
 echo "[6/9] Running tests"
 uv run pytest -q
@@ -48,6 +49,18 @@ import phoneagent
 
 root = Path("dist")
 version = phoneagent.__version__
+metadata_checks = {
+    "CITATION.cff": f'version: "{version}"',
+    "CHANGELOG.md": f"## [{version}]",
+    "docs/index.html": f">v{version}<",
+    "docs/script.js": f"/releases/tag/v{version}",
+}
+for filename, marker in metadata_checks.items():
+    text = Path(filename).read_text(encoding="utf-8")
+    if marker not in text:
+        raise SystemExit(f"{filename} does not contain release marker {marker!r}")
+if not Path(f"RELEASE_NOTES_v{version}.md").is_file():
+    raise SystemExit(f"Missing RELEASE_NOTES_v{version}.md")
 artifacts = sorted(root.glob(f"phoneagent-{version}*"))
 if not artifacts:
     raise SystemExit(f"No v{version} distribution artifacts were built")

@@ -58,5 +58,6 @@ real-device evaluation, regression testing, and maintenance mode.
 ## Validation status
 
 The unit, integration-style, fault-injection, Web HTTP, JavaScript syntax, lint, package build,
-and clean-wheel checks are release gates. Real-device smoke and evaluation matrices must be
-completed and recorded before creating the v0.2.0 tag.
+and clean-wheel checks are release gates. The first six-case real-device smoke matrix passed on a
+vivo Android 16 device; the retained exploratory failure and methodology are documented in
+`docs/REAL_DEVICE_RESULT_v0.2.0.md`.

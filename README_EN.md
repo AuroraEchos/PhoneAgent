@@ -181,6 +181,8 @@ The report keeps runtime-reported and externally judged success rates separate a
 steps, recoveries, error codes, model time, and Token usage. See
 [`docs/EVALUATION.md`](docs/EVALUATION.md) for the evaluation and annotation contract, and
 [`docs/REAL_DEVICE_REGRESSION.md`](docs/REAL_DEVICE_REGRESSION.md) for the release smoke matrix.
+The first redacted v0.2.0 device result is in
+[`docs/REAL_DEVICE_RESULT_v0.2.0.md`](docs/REAL_DEVICE_RESULT_v0.2.0.md).
 
 ## Development
 

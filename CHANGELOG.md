@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-12
+
 ### Added
 
 - Offline `phoneagent-eval` trajectory reports that keep runtime-reported completion separate
@@ -13,6 +15,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   and provider-reported Token usage.
 - A final-refactor design contract, evaluation methodology, public-import regression coverage,
   Web task-generation race coverage, and injected observation-timeout/ADB-disconnect tests.
+- A recorded six-case Android 16 real-device release matrix, including a retained exploratory
+  failure and separate runtime/task-success reporting.
 
 ### Changed
 

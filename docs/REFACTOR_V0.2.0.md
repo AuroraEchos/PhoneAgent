@@ -1,7 +1,7 @@
 # PhoneAgent v0.2.0 Refactor
 
-Status: in progress  
-Target: 2026-08-28 release candidate  
+Status: release candidate complete (2026-08-12)
+Target: 2026-08-28 release candidate
 Scope: the final architecture-focused release before the project moves into evaluation,
 real-device testing, and maintenance mode
 
@@ -137,3 +137,9 @@ The release candidate is ready when:
 
 No new architecture work should enter the release after August 24 unless it fixes a demonstrated
 correctness or safety problem.
+
+The acceptance gates were completed on the refactor branch. The real-device environment,
+retained failure, external annotations, and six-case result are recorded in
+[`REAL_DEVICE_RESULT_v0.2.0.md`](REAL_DEVICE_RESULT_v0.2.0.md). Further August work is evaluation,
+compatibility testing, documentation rehearsal, and demonstrated bug fixes rather than another
+architecture version.
