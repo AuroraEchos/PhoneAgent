@@ -39,7 +39,7 @@
         <img src="assets/logo.svg" alt="" width="34" height="34">
         <span>PhoneAgent</span>
       </a>
-      <span class="header-release" aria-label="Current release">v0.1.4</span>
+      <span class="header-release" aria-label="Current release">v0.2.0</span>
 
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" data-nav-toggle>
         <span class="sr-only">Open navigation</span>
@@ -72,7 +72,7 @@
         <div class="hero-copy reveal">
           <div class="eyebrow">
             <span class="status-dot" aria-hidden="true"></span>
-            <span data-i18n="hero.eyebrow">Open source · v0.1.4 Alpha</span>
+            <span data-i18n="hero.eyebrow">Open source · v0.2.0 Research Release</span>
           </div>
 
           <h1>
@@ -460,7 +460,7 @@
             <li data-i18n="trajectory.item2">Measure latency, actions, and recovery behavior; capture tokens when the provider reports usage.</li>
             <li data-i18n="trajectory.item3">Use saved trajectories as input for evaluation and future experience-learning work.</li>
           </ul>
-          <a class="text-link" data-link="release" href="#" target="_blank" rel="noreferrer"><span data-i18n="trajectory.release">Read the v0.1.4 release notes</span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+          <a class="text-link" data-link="release" href="#" target="_blank" rel="noreferrer"><span data-i18n="trajectory.release">Read the v0.2.0 release notes</span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
         </div>
       </div>
     </section>
@@ -470,21 +470,21 @@
         <div class="section-heading reveal">
           <span class="section-kicker" data-i18n="roadmap.kicker">Roadmap</span>
           <h2 data-i18n="roadmap.title">The runtime is small by design. The direction is not.</h2>
-          <p data-i18n="roadmap.description">The first release freezes a reliable baseline. Future work can improve semantic correctness without obscuring the core loop.</p>
+          <p data-i18n="roadmap.description">v0.2.0 freezes the final architecture baseline. The project now moves into real-device evaluation, regression, and maintenance.</p>
         </div>
 
         <div class="roadmap-board reveal reveal-delay-1">
           <div class="roadmap-column complete" data-spotlight>
-            <div class="roadmap-column-head"><span></span><div><b data-i18n="roadmap.complete">Released</b><small>v0.1.4</small></div></div>
+            <div class="roadmap-column-head"><span></span><div><b data-i18n="roadmap.complete">Released</b><small>v0.2.0</small></div></div>
             <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item1.title">Vision agent loop</b><small data-i18n="roadmap.item1.description">One live AgentState and one auditable AgentEvent stream.</small></p></div>
             <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item2.title">Lazy Android app launch</b><small data-i18n="roadmap.item2.description">Static aliases, installation checks, package launch, foreground verification.</small></p></div>
             <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item3.title">Safe action runtime</b><small data-i18n="roadmap.item3.description">Strict protocol, confirmation, minimal bounded recovery.</small></p></div>
             <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.web.title">Local Web Console</b><small data-i18n="roadmap.web.description">Session checks, live events, prompts, and trajectory inspection.</small></p></div>
+            <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item5.title">Evaluation harness</b><small data-i18n="roadmap.item5.description">Externally annotated trajectory metrics and recorded real-device regression.</small></p></div>
           </div>
 
           <div class="roadmap-column next" data-spotlight>
-            <div class="roadmap-column-head"><span></span><div><b data-i18n="roadmap.next">Next</b><small>v0.2.0</small></div></div>
-            <div class="roadmap-card"><span>→</span><p><b data-i18n="roadmap.item5.title">Evaluation harness</b><small data-i18n="roadmap.item5.description">Task suites, replay, metrics, and regression.</small></p></div>
+            <div class="roadmap-column-head"><span></span><div><b data-i18n="roadmap.next">Next</b><small>Evaluation</small></div></div>
             <div class="roadmap-card"><span>→</span><p><b data-i18n="roadmap.item4.title">Broader semantic verification</b><small data-i18n="roadmap.item4.description">Subgoal-aware evidence and independent review beyond deterministic system checks.</small></p></div>
             <div class="roadmap-card"><span>→</span><p><b data-i18n="roadmap.item6.title">Provider abstraction</b><small data-i18n="roadmap.item6.description">More local and hosted VLM backends.</small></p></div>
           </div>
@@ -503,13 +503,13 @@
       <div class="container limitations-grid">
         <div class="limitations-heading reveal">
           <span class="section-kicker" data-i18n="limitations.kicker">Current boundaries</span>
-          <h2 data-i18n="limitations.title">Honest about what v0.1.4 can prove.</h2>
+          <h2 data-i18n="limitations.title">Honest about what v0.2.0 can prove.</h2>
           <p data-i18n="limitations.description">PhoneAgent is an Alpha research and engineering runtime. It exposes uncertainty instead of converting weak evidence into confident claims.</p>
         </div>
 
         <div class="limitations-list">
           <article class="reveal"><span>01</span><div><h3 data-i18n="limitations.item1.title">Visual change is not semantic correctness</h3><p data-i18n="limitations.item1.description">For coordinate actions, a changed screen does not prove that the intended UI target was selected.</p></div></article>
-          <article class="reveal reveal-delay-1"><span>02</span><div><h3 data-i18n="limitations.item2.title">Task completion is model-reported</h3><p data-i18n="limitations.item2.description">The planner currently reports full completion through finish(...); there is no independent task judge yet.</p></div></article>
+          <article class="reveal reveal-delay-1"><span>02</span><div><h3 data-i18n="limitations.item2.title">Task completion is model-reported</h3><p data-i18n="limitations.item2.description">The planner reports runtime completion through finish(...); published task correctness still requires an external annotation or deterministic judge.</p></div></article>
           <article class="reveal reveal-delay-2"><span>03</span><div><h3 data-i18n="limitations.item3.title">Protected screens may require takeover</h3><p data-i18n="limitations.item3.description">The runtime does not guess on blank or protected screens; it requests takeover when enabled or stops the run.</p></div></article>
           <article class="reveal"><span>04</span><div><h3 data-i18n="limitations.item4.title">ADB is the current deployment boundary</h3><p data-i18n="limitations.item4.description">A true on-device product requires an Android application, services, permissions, and privacy controls.</p></div></article>
         </div>
@@ -540,7 +540,7 @@
         <p data-i18n="footer.description">Vision-driven Android agent runtime.</p>
       </div>
       <div class="footer-links">
-        <div><b data-i18n="footer.project">Project</b><a data-link="github" href="#" target="_blank" rel="noreferrer">GitHub</a><a data-link="release" href="#" target="_blank" rel="noreferrer">Release v0.1.4</a><a data-link="issues" href="#" target="_blank" rel="noreferrer">Issues</a></div>
+        <div><b data-i18n="footer.project">Project</b><a data-link="github" href="#" target="_blank" rel="noreferrer">GitHub</a><a data-link="release" href="#" target="_blank" rel="noreferrer">Release v0.2.0</a><a data-link="issues" href="#" target="_blank" rel="noreferrer">Issues</a></div>
         <div><b data-i18n="footer.resources">Resources</b><a href="ARCHITECTURE.md" target="_blank" rel="noreferrer">Architecture</a><a data-link="readme" href="#" target="_blank" rel="noreferrer">README</a><a data-link="license" href="#" target="_blank" rel="noreferrer">Apache-2.0</a></div>
       </div>
     </div>

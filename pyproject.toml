@@ -57,6 +57,7 @@ dev = [
 [project.scripts]
 phoneagent = "phoneagent.entrypoint:main"
 phoneagent-web = "webui.server:main"
+phoneagent-eval = "phoneagent.evaluation:main"
 
 [tool.setuptools.dynamic]
 version = { attr = "phoneagent._version.__version__" }

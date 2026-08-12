@@ -6,6 +6,47 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-12
+
+### Added
+
+- Offline `phoneagent-eval` trajectory reports that keep runtime-reported completion separate
+  from externally annotated task correctness and summarize steps, recovery, failures, latency,
+  and provider-reported Token usage.
+- A final-refactor design contract, evaluation methodology, public-import regression coverage,
+  Web task-generation race coverage, and injected observation-timeout/ADB-disconnect tests.
+- A recorded six-case Android 16 real-device release matrix, including a retained exploratory
+  failure and separate runtime/task-success reporting.
+
+### Changed
+
+- Reworked the Agent step implementation into explicit observation, context, response-selection,
+  action-acceptance, device-execution, and verification/recovery stages while retaining one
+  `AgentState` and event owner.
+- Moved the strict action parser and validation rules into a side-effect-free protocol module,
+  confirmation and wait-duration rules into a policy module, and kept device dispatch focused in
+  `ActionHandler`.
+- Unified synchronous and asynchronous streamed-response accumulation, usage normalization,
+  finish diagnostics, protocol parsing, and `ModelResponse` construction.
+- Bound Web Console callbacks to a task generation, prevented terminal worker cleanup from
+  overlapping the next task, and split the dependency-free frontend into API, state, timeline,
+  usage, and application modules.
+- Removed unused private synchronous wrappers after the async core path became canonical; public
+  sync and async Agent entry points remain available.
+
+### Fixed
+
+- Preserved typed screenshot decode, permission, and capture failures after retry exhaustion
+  instead of replacing them with a bare-reraise runtime error.
+- Accepted reasoning-only responses from deliberately short model preflight probes, and restored
+  the user's original input method after a task that used ADB Keyboard.
+
+### Compatibility
+
+- Public Python imports, CLI and Web entry points, environment variables, local HTTP routes, and
+  trajectory schema `1.0` remain compatible with `v0.1.4`.
+- A saved `v0.1.4` trajectory remains readable by the refactored Web Console.
+
 ## [0.1.4] - 2026-08-11
 
 ### Added

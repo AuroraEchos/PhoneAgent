@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import threading
-import time
 
 import pytest
 
 from phoneagent.actions import ActionHandler, ActionParseError, do, parse_action
+from phoneagent.actions.policy import confirmation_message, parse_duration_seconds
 from phoneagent.adb.device import _extract_system_panel_state
 from phoneagent.devices import SystemPanelCommandResult
 
@@ -47,20 +47,87 @@ def test_wait_action_is_cancelled_without_waiting_for_full_duration() -> None:
     cancel_event = threading.Event()
     handler = ActionHandler(object(), cancel_event=cancel_event)  # type: ignore[arg-type]
     results = []
-    started = time.monotonic()
     thread = threading.Thread(
         target=lambda: results.append(
             handler.execute(do(action="Wait", duration="10 seconds"), 1, 1)
         )
     )
     thread.start()
-    time.sleep(0.05)
     cancel_event.set()
     thread.join(timeout=1)
 
     assert not thread.is_alive()
-    assert time.monotonic() - started < 1
     assert results[0].error_code == "user_cancelled"
+
+
+def test_type_keeps_test_keyboard_for_task_then_restores_original_input_method() -> None:
+    class Device:
+        def __init__(self) -> None:
+            self.prepared = 0
+            self.typed: list[str] = []
+            self.restored: list[str] = []
+
+        def detect_and_set_adb_keyboard(self) -> str:
+            self.prepared += 1
+            return "original/.Ime"
+
+        def type_text(self, value: str) -> None:
+            self.typed.append(value)
+
+        def restore_keyboard(self, ime: str) -> None:
+            self.restored.append(ime)
+
+    device = Device()
+    handler = ActionHandler(device)  # type: ignore[arg-type]
+
+    first = handler.execute(do(action="Type", text="first"), 1080, 2400)
+    second = handler.execute(do(action="Type", text="second"), 1080, 2400)
+
+    assert first.success is True
+    assert second.success is True
+    assert device.prepared == 1
+    assert device.typed == ["first", "second"]
+    assert device.restored == []
+    assert handler.restore_input_method() is None
+    assert device.restored == ["original/.Ime"]
+    assert handler.restore_input_method() is None
+    assert device.restored == ["original/.Ime"]
+
+
+@pytest.mark.parametrize(
+    ("action", "expected_fragment"),
+    [
+        ({"sensitive": True, "message": "确认发送"}, "确认发送"),
+        ({"requires_confirmation": True}, "marked as sensitive"),
+        ({"risk_level": "high", "description": "修改账号"}, "修改账号"),
+        ({"description": "place order now"}, "Sensitive operation detected"),
+        ({"label": "删除联系人"}, "Sensitive operation detected"),
+    ],
+)
+def test_confirmation_policy_is_independent_from_device_execution(
+    action: dict,
+    expected_fragment: str,
+) -> None:
+    assert expected_fragment in str(confirmation_message(action))
+
+
+def test_confirmation_policy_allows_unmarked_navigation() -> None:
+    assert confirmation_message({"action": "Tap", "description": "打开设置"}) is None
+
+
+@pytest.mark.parametrize(
+    ("duration", "seconds"),
+    [
+        (True, 1.0),
+        (-2, 0.0),
+        (1.5, 1.5),
+        ("250 ms", 0.25),
+        ("2 minutes", 120.0),
+        ("稍等片刻", 1.0),
+    ],
+)
+def test_wait_duration_policy_normalizes_supported_units(duration, seconds: float) -> None:
+    assert parse_duration_seconds(duration) == pytest.approx(seconds)
 
 
 def test_system_panel_action_uses_semantic_device_command() -> None:

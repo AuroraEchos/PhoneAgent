@@ -257,6 +257,146 @@ class ModelResponseParser:
         return None
 
 
+def _extract_usage(usage: Any) -> tuple[int | None, int | None, int | None]:
+    """Normalize provider usage objects and dictionaries."""
+
+    def read(name: str) -> int | None:
+        value = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    return read("prompt_tokens"), read("completion_tokens"), read("total_tokens")
+
+
+def _content_to_text(content: Any) -> str:
+    """Normalize the content shapes returned by OpenAI-compatible providers."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text") or item.get("content")
+                if text:
+                    parts.append(str(text))
+            else:
+                text = getattr(item, "text", None)
+                if text:
+                    parts.append(str(text))
+        return "".join(parts)
+    return str(content)
+
+
+@dataclass(slots=True)
+class _StreamResponseState:
+    """Transport-neutral state for one streamed model response."""
+
+    started_at: float = field(default_factory=time.monotonic)
+    boundary_detector: StreamingBoundaryDetector = field(
+        default_factory=lambda: StreamingBoundaryDetector(markers=("do(", "finish("))
+    )
+    content_parts: list[str] = field(default_factory=list)
+    reasoning_parts: list[str] = field(default_factory=list)
+    time_to_first_token: float | None = None
+    time_to_thinking_end: float | None = None
+    finish_reason: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+
+    def consume(self, chunk: Any) -> tuple[str, str, bool]:
+        """Consume one provider chunk and return reasoning/printable boundary output."""
+        usage = getattr(chunk, "usage", None)
+        if usage is not None:
+            self.prompt_tokens, self.completion_tokens, self.total_tokens = _extract_usage(usage)
+        if not getattr(chunk, "choices", None):
+            return "", "", False
+
+        choice = chunk.choices[0]
+        chunk_finish_reason = getattr(choice, "finish_reason", None)
+        if chunk_finish_reason:
+            self.finish_reason = str(chunk_finish_reason)
+        delta = choice.delta
+        content = _content_to_text(getattr(delta, "content", None))
+        reasoning = _content_to_text(getattr(delta, "reasoning_content", None))
+        if self.time_to_first_token is None and (reasoning or content):
+            self.time_to_first_token = time.monotonic() - self.started_at
+        if reasoning:
+            self.reasoning_parts.append(reasoning)
+        if not content:
+            return reasoning, "", False
+
+        self.content_parts.append(content)
+        printable, transitioned = self.boundary_detector.feed(content)
+        if transitioned and self.time_to_thinking_end is None:
+            self.time_to_thinking_end = time.monotonic() - self.started_at
+        return reasoning, printable, transitioned
+
+    def remaining_printable(self) -> str:
+        return self.boundary_detector.finalize()
+
+    def build_response(self) -> ModelResponse:
+        """Parse one completed stream and preserve diagnostics on protocol failure."""
+        total_time = time.monotonic() - self.started_at
+        error_metrics = {
+            "time_to_first_token": self.time_to_first_token,
+            "time_to_thinking_end": self.time_to_thinking_end,
+            "total_time": total_time,
+            "finish_reason": self.finish_reason,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "total_tokens": self.total_tokens,
+            "truncated": _is_truncation_finish_reason(self.finish_reason),
+        }
+        raw_content = "".join(self.content_parts).strip()
+        reasoning_content = "".join(self.reasoning_parts).strip()
+        if not raw_content:
+            raise ModelProtocolError(
+                "Model returned an empty content payload",
+                raw_content=raw_content,
+                finish_reason=self.finish_reason,
+                metrics=error_metrics,
+            )
+        try:
+            thinking, action = ModelResponseParser.parse(raw_content)
+        except ModelProtocolError as exc:
+            raise ModelProtocolError(
+                str(exc),
+                raw_content=raw_content,
+                finish_reason=self.finish_reason,
+                metrics=error_metrics,
+            ) from exc
+        if not thinking and reasoning_content:
+            thinking = reasoning_content
+        if not action:
+            raise ModelProtocolError(
+                "Model response did not contain an action",
+                raw_content=raw_content,
+                finish_reason=self.finish_reason,
+                metrics=error_metrics,
+            )
+        if self.time_to_thinking_end is None and thinking:
+            self.time_to_thinking_end = total_time
+        return ModelResponse(
+            thinking=thinking,
+            action=action,
+            raw_content=raw_content,
+            time_to_first_token=self.time_to_first_token,
+            time_to_thinking_end=self.time_to_thinking_end,
+            total_time=total_time,
+            finish_reason=self.finish_reason,
+            prompt_tokens=self.prompt_tokens,
+            completion_tokens=self.completion_tokens,
+            total_tokens=self.total_tokens,
+        )
+
+
 StreamCallback = Callable[[str], None]
 
 
@@ -349,15 +489,7 @@ class OpenAIModelClient(BaseModelClient):
         cancel_event: Event | None,
     ) -> ModelResponse:
         self._raise_if_cancelled(cancel_event)
-        start_time = time.monotonic()
-        time_to_first_token: float | None = None
-        time_to_thinking_end: float | None = None
-        content_parts: list[str] = []
-        reasoning_parts: list[str] = []
-        finish_reason: str | None = None
-        prompt_tokens: int | None = None
-        completion_tokens: int | None = None
-        total_tokens: int | None = None
+        stream_state = _StreamResponseState(started_at=time.monotonic())
 
         request_kwargs = {
             "messages": messages,
@@ -369,7 +501,6 @@ class OpenAIModelClient(BaseModelClient):
             "extra_body": self.config.extra_body,
         }
 
-        boundary_detector = StreamingBoundaryDetector(markers=("do(", "finish("))
         stream_kwargs = dict(request_kwargs)
         if self.config.capture_usage:
             stream_kwargs["stream_options"] = {"include_usage": True}
@@ -392,34 +523,13 @@ class OpenAIModelClient(BaseModelClient):
         try:
             for chunk in stream:
                 self._raise_if_cancelled(cancel_event)
-                usage = getattr(chunk, "usage", None)
-                if usage is not None:
-                    prompt_tokens, completion_tokens, total_tokens = self._extract_usage(usage)
-                if not getattr(chunk, "choices", None):
-                    continue
-                choice = chunk.choices[0]
-                chunk_finish_reason = getattr(choice, "finish_reason", None)
-                if chunk_finish_reason:
-                    finish_reason = str(chunk_finish_reason)
-                delta = choice.delta
-                content = self._content_to_text(getattr(delta, "content", None))
-                reasoning = self._content_to_text(getattr(delta, "reasoning_content", None))
-                if time_to_first_token is None and (reasoning or content):
-                    time_to_first_token = time.monotonic() - start_time
-                if reasoning:
-                    reasoning_parts.append(reasoning)
-                    if print_stream:
-                        self._emit_text(reasoning, stream_callback)
-                if not content:
-                    continue
-                content_parts.append(content)
-                printable, transitioned = boundary_detector.feed(content)
+                reasoning, printable, transitioned = stream_state.consume(chunk)
+                if print_stream and reasoning:
+                    self._emit_text(reasoning, stream_callback)
                 if print_stream and printable:
                     self._emit_text(printable, stream_callback)
-                if transitioned and time_to_thinking_end is None:
-                    time_to_thinking_end = time.monotonic() - start_time
-                    if print_stream and stream_callback is None:
-                        print(flush=True)
+                if transitioned and print_stream and stream_callback is None:
+                    print(flush=True)
             self._raise_if_cancelled(cancel_event)
         except Exception as exc:
             if cancel_event is not None and cancel_event.is_set():
@@ -429,85 +539,25 @@ class OpenAIModelClient(BaseModelClient):
             if watcher_stop is not None:
                 watcher_stop.set()
             self._close_sync_stream(stream)
-        remaining = boundary_detector.finalize()
+        remaining = stream_state.remaining_printable()
         if print_stream and remaining:
             self._emit_text(remaining, stream_callback)
-
-        total_time = time.monotonic() - start_time
-        error_metrics = {
-            "time_to_first_token": time_to_first_token,
-            "time_to_thinking_end": time_to_thinking_end,
-            "total_time": total_time,
-            "finish_reason": finish_reason,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
-            "truncated": _is_truncation_finish_reason(finish_reason),
-        }
-        raw_content = "".join(content_parts).strip()
-        reasoning_content = "".join(reasoning_parts).strip()
-        if not raw_content:
-            raise ModelProtocolError(
-                "Model returned an empty content payload",
-                raw_content=raw_content,
-                finish_reason=finish_reason,
-                metrics=error_metrics,
-            )
-
-        try:
-            thinking, action = ModelResponseParser.parse(raw_content)
-        except ModelProtocolError as exc:
-            raise ModelProtocolError(
-                str(exc),
-                raw_content=raw_content,
-                finish_reason=finish_reason,
-                metrics=error_metrics,
-            ) from exc
-        if not thinking and reasoning_content:
-            thinking = reasoning_content
-        if not action:
-            raise ModelProtocolError(
-                "Model response did not contain an action",
-                raw_content=raw_content,
-                finish_reason=finish_reason,
-                metrics=error_metrics,
-            )
-        if time_to_thinking_end is None and thinking:
-            time_to_thinking_end = total_time
+        response = stream_state.build_response()
         if print_stream:
             self._print_metrics(
-                time_to_first_token,
-                time_to_thinking_end,
-                total_time,
-                finish_reason=finish_reason,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
+                response.time_to_first_token,
+                response.time_to_thinking_end,
+                response.total_time or 0.0,
+                finish_reason=response.finish_reason,
+                prompt_tokens=response.prompt_tokens,
+                completion_tokens=response.completion_tokens,
+                total_tokens=response.total_tokens,
             )
-
-        return ModelResponse(
-            thinking=thinking,
-            action=action,
-            raw_content=raw_content,
-            time_to_first_token=time_to_first_token,
-            time_to_thinking_end=time_to_thinking_end,
-            total_time=total_time,
-            finish_reason=finish_reason,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-        )
+        return response
 
     @staticmethod
     def _extract_usage(usage: Any) -> tuple[int | None, int | None, int | None]:
-        def read(name: str) -> int | None:
-            value = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
-            try:
-                return int(value) if value is not None else None
-            except (TypeError, ValueError):
-                return None
-
-        return read("prompt_tokens"), read("completion_tokens"), read("total_tokens")
+        return _extract_usage(usage)
 
     @staticmethod
     def _usage_option_unsupported(exc: Exception) -> bool:
@@ -520,25 +570,7 @@ class OpenAIModelClient(BaseModelClient):
 
     @staticmethod
     def _content_to_text(content: Any) -> str:
-        if content is None:
-            return ""
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts: list[str] = []
-            for item in content:
-                if isinstance(item, str):
-                    parts.append(item)
-                elif isinstance(item, dict):
-                    text = item.get("text") or item.get("content")
-                    if text:
-                        parts.append(str(text))
-                else:
-                    text = getattr(item, "text", None)
-                    if text:
-                        parts.append(str(text))
-            return "".join(parts)
-        return str(content)
+        return _content_to_text(content)
 
     @staticmethod
     def _emit_text(text: str, callback: StreamCallback | None) -> None:
@@ -728,15 +760,7 @@ class AsyncOpenAIModelClient(BaseModelClient):
         cancel_event: Event | None,
     ) -> ModelResponse:
         OpenAIModelClient._raise_if_cancelled(cancel_event)
-        start_time = time.monotonic()
-        time_to_first_token: float | None = None
-        time_to_thinking_end: float | None = None
-        content_parts: list[str] = []
-        reasoning_parts: list[str] = []
-        finish_reason: str | None = None
-        prompt_tokens: int | None = None
-        completion_tokens: int | None = None
-        total_tokens: int | None = None
+        stream_state = _StreamResponseState(started_at=time.monotonic())
 
         request_kwargs = {
             "messages": messages,
@@ -748,7 +772,6 @@ class AsyncOpenAIModelClient(BaseModelClient):
             "extra_body": self.config.extra_body,
         }
 
-        boundary_detector = StreamingBoundaryDetector(markers=("do(", "finish("))
         stream_kwargs = dict(request_kwargs)
         if self.config.capture_usage:
             stream_kwargs["stream_options"] = {"include_usage": True}
@@ -762,34 +785,13 @@ class AsyncOpenAIModelClient(BaseModelClient):
         try:
             async for chunk in stream:
                 OpenAIModelClient._raise_if_cancelled(cancel_event)
-                usage = getattr(chunk, "usage", None)
-                if usage is not None:
-                    prompt_tokens, completion_tokens, total_tokens = self._extract_usage(usage)
-                if not getattr(chunk, "choices", None):
-                    continue
-                choice = chunk.choices[0]
-                chunk_finish_reason = getattr(choice, "finish_reason", None)
-                if chunk_finish_reason:
-                    finish_reason = str(chunk_finish_reason)
-                delta = choice.delta
-                content = self._content_to_text(getattr(delta, "content", None))
-                reasoning = self._content_to_text(getattr(delta, "reasoning_content", None))
-                if time_to_first_token is None and (reasoning or content):
-                    time_to_first_token = time.monotonic() - start_time
-                if reasoning:
-                    reasoning_parts.append(reasoning)
-                    if print_stream:
-                        self._emit_text(reasoning, stream_callback)
-                if not content:
-                    continue
-                content_parts.append(content)
-                printable, transitioned = boundary_detector.feed(content)
+                reasoning, printable, transitioned = stream_state.consume(chunk)
+                if print_stream and reasoning:
+                    self._emit_text(reasoning, stream_callback)
                 if print_stream and printable:
                     self._emit_text(printable, stream_callback)
-                if transitioned and time_to_thinking_end is None:
-                    time_to_thinking_end = time.monotonic() - start_time
-                    if print_stream and stream_callback is None:
-                        print(flush=True)
+                if transitioned and print_stream and stream_callback is None:
+                    print(flush=True)
             OpenAIModelClient._raise_if_cancelled(cancel_event)
         except Exception as exc:
             if cancel_event is not None and cancel_event.is_set():
@@ -797,74 +799,21 @@ class AsyncOpenAIModelClient(BaseModelClient):
             raise
         finally:
             await self._close_async_stream(stream)
-        remaining = boundary_detector.finalize()
+        remaining = stream_state.remaining_printable()
         if print_stream and remaining:
             self._emit_text(remaining, stream_callback)
-
-        total_time = time.monotonic() - start_time
-        error_metrics = {
-            "time_to_first_token": time_to_first_token,
-            "time_to_thinking_end": time_to_thinking_end,
-            "total_time": total_time,
-            "finish_reason": finish_reason,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
-            "truncated": _is_truncation_finish_reason(finish_reason),
-        }
-        raw_content = "".join(content_parts).strip()
-        reasoning_content = "".join(reasoning_parts).strip()
-        if not raw_content:
-            raise ModelProtocolError(
-                "Model returned an empty content payload",
-                raw_content=raw_content,
-                finish_reason=finish_reason,
-                metrics=error_metrics,
-            )
-
-        try:
-            thinking, action = ModelResponseParser.parse(raw_content)
-        except ModelProtocolError as exc:
-            raise ModelProtocolError(
-                str(exc),
-                raw_content=raw_content,
-                finish_reason=finish_reason,
-                metrics=error_metrics,
-            ) from exc
-        if not thinking and reasoning_content:
-            thinking = reasoning_content
-        if not action:
-            raise ModelProtocolError(
-                "Model response did not contain an action",
-                raw_content=raw_content,
-                finish_reason=finish_reason,
-                metrics=error_metrics,
-            )
-        if time_to_thinking_end is None and thinking:
-            time_to_thinking_end = total_time
+        response = stream_state.build_response()
         if print_stream:
             self._print_metrics(
-                time_to_first_token,
-                time_to_thinking_end,
-                total_time,
-                finish_reason=finish_reason,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
+                response.time_to_first_token,
+                response.time_to_thinking_end,
+                response.total_time or 0.0,
+                finish_reason=response.finish_reason,
+                prompt_tokens=response.prompt_tokens,
+                completion_tokens=response.completion_tokens,
+                total_tokens=response.total_tokens,
             )
-
-        return ModelResponse(
-            thinking=thinking,
-            action=action,
-            raw_content=raw_content,
-            time_to_first_token=time_to_first_token,
-            time_to_thinking_end=time_to_thinking_end,
-            total_time=total_time,
-            finish_reason=finish_reason,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-        )
+        return response
 
     @staticmethod
     def _emit_text(text: str, callback: StreamCallback | None) -> None:

@@ -4,9 +4,10 @@ import json
 import sys
 import threading
 import time
+from contextvars import copy_context
 from pathlib import Path
 from typing import Any
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 import pytest
 
@@ -17,13 +18,14 @@ from webui.runtime import ConsoleRuntime, TrajectoryStore, _build_configs, _buil
 from webui.server import ConsoleHTTPServer
 
 
-def _wait_for(predicate, timeout: float = 2.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return
-        time.sleep(0.01)
-    raise AssertionError("Timed out waiting for background web console state")
+_urlopen = build_opener(ProxyHandler({})).open
+
+
+def _wait_for(runtime: ConsoleRuntime, predicate, timeout: float = 2.0) -> None:
+    with runtime._condition:
+        completed = runtime._condition.wait_for(predicate, timeout=timeout)
+    if not completed:
+        raise AssertionError("Timed out waiting for background web console state")
 
 
 class _FakeState:
@@ -111,6 +113,52 @@ class _FakeAgent:
         return "done" if self.state.success else "cancelled"
 
 
+class _GenerationAgent(_FakeAgent):
+    """Emit a first-task callback after the second task has already started."""
+
+    def __init__(self, **callbacks: Any) -> None:
+        super().__init__(**callbacks)
+        self.calls = 0
+        self.emit_stale = threading.Event()
+        self.stale_emitted = threading.Event()
+        self.second_entered = threading.Event()
+        self.release_second = threading.Event()
+
+    def run(self, task: str) -> str:
+        self.calls += 1
+        self.state.goal = task
+        if self.calls == 1:
+            callback_context = copy_context()
+
+            def emit_later() -> None:
+                self.emit_stale.wait()
+                callback_context.run(
+                    self.event_callback,
+                    AgentEvent(
+                        type=EventType.MODEL_RESPONSE,
+                        message="stale response",
+                        payload={"thinking": "stale first-task thinking"},
+                        step=99,
+                    ),
+                )
+                self.stale_emitted.set()
+
+            threading.Thread(target=emit_later, daemon=True).start()
+            return "first done"
+
+        self.event_callback(
+            AgentEvent(
+                type=EventType.MODEL_RESPONSE,
+                message="current response",
+                payload={"thinking": "current second-task thinking"},
+                step=1,
+            )
+        )
+        self.second_entered.set()
+        self.release_second.wait(timeout=2)
+        return "second done"
+
+
 def _device_check(_device_id: str | None) -> tuple[bool, str | None]:
     print("[1/4] ADB executable\n  [OK] Android Debug Bridge")
     print("[2/4] Connected device\n  [OK] device ready\n  Selected: test-device")
@@ -176,7 +224,7 @@ def test_console_checks_once_and_reuses_agent_for_tasks(tmp_path: Path) -> None:
         model_checker=model_checker,
     )
     assert runtime.start_checks() is True
-    _wait_for(lambda: runtime.snapshot()["startup"]["status"] == "ready")
+    _wait_for(runtime, lambda: runtime.snapshot()["startup"]["status"] == "ready")
 
     startup = runtime.snapshot()["startup"]
     statuses = {item["id"]: item["status"] for item in startup["checks"]}
@@ -190,9 +238,9 @@ def test_console_checks_once_and_reuses_agent_for_tasks(tmp_path: Path) -> None:
     assert startup["device_id"] == "test-device"
 
     runtime.start_task("first task")
-    _wait_for(lambda: runtime.snapshot()["task"]["status"] == "success")
+    _wait_for(runtime, lambda: runtime.snapshot()["task"]["status"] == "success")
     runtime.start_task("second task")
-    _wait_for(lambda: runtime.snapshot()["task"]["status"] == "success")
+    _wait_for(runtime, lambda: runtime.snapshot()["task"]["status"] == "success")
 
     assert len(created) == 1
     assert device_calls == 1
@@ -223,19 +271,60 @@ def test_sensitive_confirmation_round_trip(tmp_path: Path) -> None:
         model_checker=_model_check,
     )
     runtime.start_checks()
-    _wait_for(lambda: runtime.snapshot()["startup"]["status"] == "ready")
+    _wait_for(runtime, lambda: runtime.snapshot()["startup"]["status"] == "ready")
     runtime.start_task("place an order")
-    _wait_for(lambda: runtime.snapshot()["pending_prompt"] is not None)
+    _wait_for(runtime, lambda: runtime.snapshot()["pending_prompt"] is not None)
 
     snapshot = runtime.snapshot()
     assert snapshot["task"]["status"] == "waiting_user"
     prompt = snapshot["pending_prompt"]
     assert prompt["type"] == "confirmation"
     runtime.respond_prompt(prompt["id"], True)
-    _wait_for(lambda: runtime.snapshot()["task"]["status"] == "success")
+    _wait_for(runtime, lambda: runtime.snapshot()["task"]["status"] == "success")
 
     assert created[0].confirmed is True
     assert runtime.snapshot()["pending_prompt"] is None
+    runtime.close()
+
+
+def test_stale_agent_callback_cannot_mutate_the_next_task(tmp_path: Path) -> None:
+    created: list[_GenerationAgent] = []
+
+    def factory(**kwargs: Any) -> _GenerationAgent:
+        agent = _GenerationAgent(**kwargs)
+        created.append(agent)
+        return agent
+
+    runtime = ConsoleRuntime(
+        tmp_path,
+        agent_factory=factory,
+        device_checker=_device_check,
+        model_checker=_model_check,
+    )
+    runtime.start_checks()
+    _wait_for(runtime, lambda: runtime.snapshot()["startup"]["status"] == "ready")
+    runtime.start_task("first task")
+    _wait_for(runtime, lambda: runtime.snapshot()["task"]["status"] == "success")
+
+    runtime.start_task("second task")
+    assert created[0].second_entered.wait(timeout=1)
+    created[0].emit_stale.set()
+    assert created[0].stale_emitted.wait(timeout=1)
+    _wait_for(
+        runtime,
+        lambda: runtime.snapshot()["task"]["last_thinking"]
+        == "current second-task thinking"
+    )
+    snapshot = runtime.snapshot()
+    assert snapshot["task"]["goal"] == "second task"
+    assert snapshot["task"]["current_step"] == 1
+    assert snapshot["task"]["last_thinking"] == "current second-task thinking"
+    assert not any(
+        event["message"] == "stale response" for event in runtime.events_after(0)["events"]
+    )
+
+    created[0].release_second.set()
+    _wait_for(runtime, lambda: runtime.snapshot()["task"]["status"] == "success")
     runtime.close()
 
 
@@ -254,13 +343,13 @@ def test_waiting_prompt_can_cancel_the_entire_task(tmp_path: Path) -> None:
         model_checker=_model_check,
     )
     runtime.start_checks()
-    _wait_for(lambda: runtime.snapshot()["startup"]["status"] == "ready")
+    _wait_for(runtime, lambda: runtime.snapshot()["startup"]["status"] == "ready")
     runtime.start_task("place an order")
-    _wait_for(lambda: runtime.snapshot()["pending_prompt"] is not None)
+    _wait_for(runtime, lambda: runtime.snapshot()["pending_prompt"] is not None)
 
     cancelling = runtime.cancel_task()
     assert cancelling["status"] == "cancelling"
-    _wait_for(lambda: runtime.snapshot()["task"]["status"] == "cancelled")
+    _wait_for(runtime, lambda: runtime.snapshot()["task"]["status"] == "cancelled")
 
     assert created[0].cancel_requested is True
     assert created[0].confirmed is False
@@ -270,7 +359,7 @@ def test_waiting_prompt_can_cancel_the_entire_task(tmp_path: Path) -> None:
     runtime.close()
 
 
-def test_trajectory_store_lists_reads_and_rejects_traversal(tmp_path: Path) -> None:
+def test_web_console_reads_v014_trajectory_schema_and_rejects_traversal(tmp_path: Path) -> None:
     runs = tmp_path / "runs"
     runs.mkdir()
     path = runs / "trajectory_abc123.json"
@@ -282,7 +371,21 @@ def test_trajectory_store_lists_reads_and_rejects_traversal(tmp_path: Path) -> N
                 "task": "open WeChat",
                 "success": True,
                 "event_count": 2,
-                "events": [],
+                "events": [
+                    {
+                        "type": "action",
+                        "timestamp": 1.0,
+                        "message": "Parsed action",
+                        "payload": {"action": {"_metadata": "do", "action": "Back"}},
+                        "step": 1,
+                    },
+                    {
+                        "type": "finish",
+                        "timestamp": 2.0,
+                        "message": "done",
+                        "payload": {"success": True, "phase": "completed"},
+                    },
+                ],
             }
         ),
         encoding="utf-8",
@@ -290,7 +393,10 @@ def test_trajectory_store_lists_reads_and_rejects_traversal(tmp_path: Path) -> N
     store = TrajectoryStore(runs)
 
     assert store.list()[0]["task"] == "open WeChat"
-    assert store.read(path.name)["run_id"] == "abc123"
+    loaded = store.read(path.name)
+    assert loaded["run_id"] == "abc123"
+    assert loaded["schema_version"] == "1.0"
+    assert loaded["events"][0]["step"] == 1
     with pytest.raises(ValueError):
         store.read("../trajectory_abc123.json")
 
@@ -303,13 +409,13 @@ def test_http_console_serves_frontend_and_accepts_task(tmp_path: Path) -> None:
         model_checker=_model_check,
     )
     runtime.start_checks()
-    _wait_for(lambda: runtime.snapshot()["startup"]["status"] == "ready")
+    _wait_for(runtime, lambda: runtime.snapshot()["startup"]["status"] == "ready")
     server = ConsoleHTTPServer(("127.0.0.1", 0), runtime)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base_url = f"http://127.0.0.1:{server.server_address[1]}"
     try:
-        with urlopen(f"{base_url}/", timeout=2) as response:
+        with _urlopen(f"{base_url}/", timeout=2) as response:
             html = response.read().decode("utf-8")
             assert response.status == 200
             assert "PhoneAgent Web Console" in html
@@ -339,12 +445,21 @@ def test_http_console_serves_frontend_and_accepts_task(tmp_path: Path) -> None:
             assert html.index('class="conversation-shell"') < html.index('class="preflight-gate"')
             assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
 
-        with urlopen(f"{base_url}/app.js", timeout=2) as response:
+        with _urlopen(f"{base_url}/app.js", timeout=2) as response:
             javascript = response.read().decode("utf-8")
-            assert "payload.raw_content" in javascript
-            assert "payload?.protocol_error" in javascript
-            assert "document.createElementNS" in javascript
-            assert "INPUT_PRICE_PER_1M_TOKENS" in javascript
+            assert 'from "./api.js"' in javascript
+            assert 'from "./timeline.js"' in javascript
+            assert 'from "./usage.js"' in javascript
+
+        with _urlopen(f"{base_url}/timeline.js", timeout=2) as response:
+            timeline_javascript = response.read().decode("utf-8")
+            assert "payload.raw_content" in timeline_javascript
+            assert "payload?.protocol_error" in timeline_javascript
+
+        with _urlopen(f"{base_url}/usage.js", timeout=2) as response:
+            usage_javascript = response.read().decode("utf-8")
+            assert "document.createElementNS" in usage_javascript
+            assert "INPUT_PRICE_PER_1M_TOKENS" in usage_javascript
 
         request = Request(
             f"{base_url}/api/tasks",
@@ -352,11 +467,11 @@ def test_http_console_serves_frontend_and_accepts_task(tmp_path: Path) -> None:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urlopen(request, timeout=2) as response:
+        with _urlopen(request, timeout=2) as response:
             assert response.status == 202
-        _wait_for(lambda: runtime.snapshot()["task"]["status"] == "success")
+        _wait_for(runtime, lambda: runtime.snapshot()["task"]["status"] == "success")
 
-        with urlopen(f"{base_url}/api/state", timeout=2) as response:
+        with _urlopen(f"{base_url}/api/state", timeout=2) as response:
             state = json.loads(response.read())
             assert state["task"]["goal"] == "open WeChat"
             assert state["task"]["status"] == "success"
@@ -375,7 +490,7 @@ def test_http_console_cancels_task_waiting_for_confirmation(tmp_path: Path) -> N
         model_checker=_model_check,
     )
     runtime.start_checks()
-    _wait_for(lambda: runtime.snapshot()["startup"]["status"] == "ready")
+    _wait_for(runtime, lambda: runtime.snapshot()["startup"]["status"] == "ready")
     server = ConsoleHTTPServer(("127.0.0.1", 0), runtime)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -387,9 +502,9 @@ def test_http_console_cancels_task_waiting_for_confirmation(tmp_path: Path) -> N
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urlopen(start_request, timeout=2) as response:
+        with _urlopen(start_request, timeout=2) as response:
             assert response.status == 202
-        _wait_for(lambda: runtime.snapshot()["pending_prompt"] is not None)
+        _wait_for(runtime, lambda: runtime.snapshot()["pending_prompt"] is not None)
 
         cancel_request = Request(
             f"{base_url}/api/tasks/cancel",
@@ -397,11 +512,11 @@ def test_http_console_cancels_task_waiting_for_confirmation(tmp_path: Path) -> N
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urlopen(cancel_request, timeout=2) as response:
+        with _urlopen(cancel_request, timeout=2) as response:
             payload = json.loads(response.read())
             assert response.status == 202
             assert payload["task"]["status"] == "cancelling"
-        _wait_for(lambda: runtime.snapshot()["task"]["status"] == "cancelled")
+        _wait_for(runtime, lambda: runtime.snapshot()["task"]["status"] == "cancelled")
     finally:
         server.shutdown()
         server.server_close()

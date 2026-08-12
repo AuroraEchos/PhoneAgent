@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 from types import SimpleNamespace
 
@@ -7,6 +8,7 @@ import pytest
 
 import phoneagent.model.client as client_module
 from phoneagent.model import (
+    AsyncOpenAIModelClient,
     ModelClient,
     ModelConfig,
     ModelProtocolError,
@@ -68,6 +70,40 @@ class _BlockingCompletions:
         self.stream = stream
 
     def create(self, **_kwargs: object):
+        return self.stream
+
+
+class _StatusError(RuntimeError):
+    def __init__(self, status_code: int, message: str = "provider error") -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class _FakeAsyncStream:
+    def __init__(self, chunks: list[SimpleNamespace]) -> None:
+        self._chunks = iter(chunks)
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._chunks)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _FakeAsyncCompletions:
+    def __init__(self, chunks: list[SimpleNamespace]) -> None:
+        self.stream = _FakeAsyncStream(chunks)
+        self.calls: list[dict[str, object]] = []
+
+    async def create(self, **kwargs: object) -> _FakeAsyncStream:
+        self.calls.append(kwargs)
         return self.stream
 
 
@@ -169,3 +205,126 @@ def test_sync_stream_is_closed_when_request_is_cancelled() -> None:
     assert stream.closed.is_set()
     assert len(captured) == 1
     assert isinstance(captured[0], ModelRequestCancelled)
+
+
+def test_async_transport_uses_the_same_response_and_usage_semantics() -> None:
+    async def exercise() -> None:
+        completions = _FakeAsyncCompletions(
+            [
+                _chunk(reasoning="先分析"),
+                _chunk(content='finish(message="done", success=True)'),
+                _chunk(
+                    finish_reason="stop",
+                    usage={"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+                ),
+            ]
+        )
+        client = AsyncOpenAIModelClient(ModelConfig(capture_usage=True, max_retries=0))
+        await client.client.close()
+        client.client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+        response = await client.request(
+            [{"role": "user", "content": "test"}],
+            print_stream=False,
+        )
+
+        assert response.thinking == "先分析"
+        assert response.action == 'finish(message="done", success=True)'
+        assert response.finish_reason == "stop"
+        assert response.prompt_tokens == 11
+        assert response.completion_tokens == 7
+        assert response.total_tokens == 18
+        assert completions.calls[0]["stream_options"] == {"include_usage": True}
+        assert completions.stream.closed is True
+
+    asyncio.run(exercise())
+
+
+def test_async_protocol_error_preserves_truncation_diagnostics() -> None:
+    async def exercise() -> ModelProtocolError:
+        completions = _FakeAsyncCompletions(
+            [
+                _chunk(
+                    content='do(action="Back"',
+                    finish_reason="length",
+                    usage={"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150},
+                )
+            ]
+        )
+        client = AsyncOpenAIModelClient(
+            ModelConfig(capture_usage=True, max_retries=0)
+        )
+        await client.client.close()
+        client.client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+        with pytest.raises(ModelProtocolError) as captured:
+            await client.request([{"role": "user", "content": "test"}], print_stream=False)
+        assert completions.stream.closed is True
+        return captured.value
+
+    error = asyncio.run(exercise())
+
+    assert error.finish_reason == "length"
+    assert error.truncated is True
+    assert error.raw_content == 'do(action="Back"'
+    assert error.metrics["prompt_tokens"] == 120
+    assert error.metrics["completion_tokens"] == 30
+    assert error.metrics["total_tokens"] == 150
+    assert error.metrics["total_time"] is not None
+
+
+def test_sync_and_async_transports_share_pre_request_cancellation_outcome() -> None:
+    cancel_event = threading.Event()
+    cancel_event.set()
+    sync_client = ModelClient(ModelConfig(capture_usage=False, max_retries=0))
+    sync_client.client.close()
+
+    with pytest.raises(ModelRequestCancelled):
+        sync_client.request(
+            [{"role": "user", "content": "test"}],
+            print_stream=False,
+            cancel_event=cancel_event,
+        )
+
+    async def exercise_async() -> None:
+        async_client = AsyncOpenAIModelClient(ModelConfig(capture_usage=False, max_retries=0))
+        await async_client.client.close()
+        with pytest.raises(ModelRequestCancelled):
+            await async_client.request(
+                [{"role": "user", "content": "test"}],
+                print_stream=False,
+                cancel_event=cancel_event,
+            )
+
+    asyncio.run(exercise_async())
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (ModelProtocolError("invalid action"), False),
+        (ModelRequestCancelled("cancelled"), False),
+        (_StatusError(400), False),
+        (_StatusError(408), True),
+        (_StatusError(429), True),
+        (_StatusError(503), True),
+        (TimeoutError("timeout"), True),
+        (ValueError("bad config"), False),
+    ],
+)
+def test_sync_and_async_transports_share_retry_classification(
+    error: Exception,
+    expected: bool,
+) -> None:
+    assert ModelClient._is_retryable(error) is expected
+    assert AsyncOpenAIModelClient._is_retryable(error) is expected
+
+
+def test_sync_and_async_transports_share_provider_normalization() -> None:
+    usage = SimpleNamespace(prompt_tokens="12", completion_tokens=3, total_tokens="invalid")
+    content = ["a", {"text": "b"}, SimpleNamespace(text="c"), {"ignored": "d"}]
+
+    assert ModelClient._extract_usage(usage) == (12, 3, None)
+    assert AsyncOpenAIModelClient._extract_usage(usage) == (12, 3, None)
+    assert ModelClient._content_to_text(content) == "abc"
+    assert AsyncOpenAIModelClient._content_to_text(content) == "abc"

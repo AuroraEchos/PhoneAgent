@@ -1,9 +1,8 @@
 """Action handling module."""
 
-from phoneagent.actions.handler import (
-    ActionHandler,
+from phoneagent.actions.handler import ActionHandler, ActionResult
+from phoneagent.actions.protocol import (
     ActionParseError,
-    ActionResult,
     do,
     finish,
     parse_action,

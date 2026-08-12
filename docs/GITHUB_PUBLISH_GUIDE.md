@@ -13,8 +13,8 @@ uv sync --extra dev
 bash scripts/release_check.sh
 ```
 
-Install the generated wheel in a clean environment and verify both command-line entry
-points before publishing.
+The release script installs the generated wheel in a clean environment and verifies all three
+command-line entry points before publishing.
 
 ## Publish the release commit
 
@@ -26,16 +26,16 @@ git push origin main
 
 ## Create the tag and GitHub Release
 
-For example, to publish `v0.1.4`:
+For example, to publish `v0.2.0`:
 
 ```bash
-git tag -a v0.1.4 -m "PhoneAgent v0.1.4"
-git push origin v0.1.4
+git tag -a v0.2.0 -m "PhoneAgent v0.2.0"
+git push origin v0.2.0
 ```
 
 The `Release` workflow verifies that the tag matches the package version, runs lint and
 tests, builds the wheel and source distribution, generates `SHA256SUMS.txt`, and creates the
-GitHub Release using `RELEASE_NOTES_v0.1.4.md`.
+GitHub Release using `RELEASE_NOTES_v0.2.0.md`.
 
 ## Enable GitHub Pages
 

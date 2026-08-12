@@ -1,5 +1,16 @@
 "use strict";
 
+import { api } from "./api.js";
+import { createAppState, isTaskBusy, phaseLabels, taskLabels } from "./state.js";
+import {
+  latestProcessText,
+  processEvents,
+  renderTimeline,
+  timelineEvents,
+  truncate,
+} from "./timeline.js";
+import { renderUsagePanel } from "./usage.js";
+
 const elements = {
   appSurface: document.querySelector("#appSurface"),
   preflightGate: document.querySelector("#preflightGate"),
@@ -76,83 +87,7 @@ const elements = {
   toast: document.querySelector("#toast"),
 };
 
-const appState = {
-  snapshot: null,
-  events: [],
-  eventCursor: 0,
-  trajectories: [],
-  currentTaskId: null,
-  currentPromptId: null,
-  lastTaskStatus: "idle",
-  viewingHistory: null,
-  draftMode: true,
-  toastTimer: null,
-  preflightExitTimer: null,
-  hasEnteredConsole: false,
-  processExpanded: false,
-};
-
-const taskLabels = {
-  idle: "空闲",
-  running: "执行中",
-  waiting_user: "等待你操作",
-  cancelling: "正在停止",
-  success: "已完成",
-  failed: "未完成",
-  cancelled: "已停止",
-};
-const phaseLabels = {
-  idle: "等待任务",
-  initializing: "正在初始化任务",
-  observing: "正在观察手机屏幕",
-  planning: "正在思考下一步操作",
-  executing: "正在操作手机",
-  verifying: "正在验证操作结果",
-  recovering: "正在调整执行策略",
-  waiting_user: "正在等待你的操作",
-  cancelling: "正在停止当前任务",
-  completed: "任务已经完成",
-  failed: "任务执行未完成",
-  cancelled: "任务已取消",
-};
-const eventLabels = {
-  start: "任务开始",
-  phase_change: "进入新阶段",
-  observation: "观察手机屏幕",
-  model_request: "请求模型规划",
-  model_response: "模型完成规划",
-  action: "生成操作",
-  execution: "执行操作",
-  verification: "验证操作结果",
-  recovery: "调整执行策略",
-  finish: "任务结束",
-  error: "发生错误",
-  note: "记录信息",
-  user_prompt: "等待用户",
-  user_response: "用户已响应",
-  web_task_started: "任务已提交",
-  web_task_finished: "任务已结束",
-  web_task_error: "任务异常",
-  web_task_cancel_requested: "请求停止任务",
-};
-
-const busyTaskStatuses = new Set(["running", "waiting_user", "cancelling"]);
-const SVG_NS = "http://www.w3.org/2000/svg";
-
-function isTaskBusy(status) {
-  return busyTaskStatuses.has(status);
-}
-
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    cache: "no-store",
-    headers: options.body ? { "Content-Type": "application/json" } : undefined,
-    ...options,
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-  return payload;
-}
+const appState = createAppState();
 
 function setConnection(online) {
   elements.connection.dataset.connection = online ? "online" : "offline";
@@ -176,200 +111,11 @@ function formatClock(seconds) {
     : [minutes, rest].map((part) => String(part).padStart(2, "0")).join(":");
 }
 
-function formatTime(timestamp) {
-  if (!timestamp) return "—";
-  return new Intl.DateTimeFormat("zh-CN", {
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-  }).format(new Date(timestamp * 1000));
-}
-
 function formatDate(timestamp) {
   if (!timestamp) return "未知时间";
   return new Intl.DateTimeFormat("zh-CN", {
     month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
   }).format(new Date(timestamp * 1000));
-}
-
-function truncate(text, length = 46) {
-  const value = String(text || "").trim();
-  return value.length > length ? `${value.slice(0, length)}…` : value;
-}
-
-function finiteNumber(value) {
-  if (value === null || value === undefined || value === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-}
-
-function formatTokens(value) {
-  return value === null ? "—" : new Intl.NumberFormat("zh-CN").format(Math.round(value));
-}
-
-function usageSamples(events, pricing) {
-  let request = 0;
-  return events.filter((event) => event.type === "model_response").map((event) => {
-    request += 1;
-    const metrics = event.payload?.metrics || {};
-    const promptTokens = finiteNumber(metrics.prompt_tokens);
-    const completionTokens = finiteNumber(metrics.completion_tokens);
-    let totalTokens = finiteNumber(metrics.total_tokens);
-    if (totalTokens === null && (promptTokens !== null || completionTokens !== null)) {
-      totalTokens = (promptTokens || 0) + (completionTokens || 0);
-    }
-    const totalTime = finiteNumber(metrics.total_time);
-    const hasBillableTokens = promptTokens !== null || completionTokens !== null;
-    const cost = pricing?.configured && hasBillableTokens
-      ? ((promptTokens || 0) * Number(pricing.input_per_million_tokens || 0)
-        + (completionTokens || 0) * Number(pricing.output_per_million_tokens || 0)) / 1_000_000
-      : null;
-    return {
-      request,
-      step: Number.isInteger(event.step) ? event.step : event.payload?.step,
-      promptTokens,
-      completionTokens,
-      totalTokens,
-      totalTime,
-      cost,
-    };
-  });
-}
-
-function svgNode(name, attributes = {}, content = null) {
-  const node = document.createElementNS(SVG_NS, name);
-  Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, String(value)));
-  if (content !== null) node.textContent = content;
-  return node;
-}
-
-function metricPoints(samples, xFor, yFor, field) {
-  return samples
-    .map((sample, index) => ({ sample, index }))
-    .filter(({ sample }) => sample[field] !== null)
-    .map(({ sample, index }) => `${xFor(index)},${yFor(sample[field])}`)
-    .join(" ");
-}
-
-function renderUsageChart(samples, target, pricing) {
-  const width = 760;
-  const hasCost = Boolean(pricing?.configured && samples.some((sample) => sample.cost !== null));
-  const height = hasCost ? 320 : 250;
-  const left = 55;
-  const right = 705;
-  const top = 34;
-  const bottom = 188;
-  const plotWidth = right - left;
-  const plotHeight = bottom - top;
-  const maxTokens = Math.max(1, ...samples.map((sample) => sample.totalTokens || 0));
-  const maxTime = Math.max(1, ...samples.map((sample) => sample.totalTime || 0));
-  const xFor = (index) => samples.length === 1
-    ? left + plotWidth / 2
-    : left + (index / (samples.length - 1)) * plotWidth;
-  const tokenY = (value) => bottom - (value / maxTokens) * plotHeight;
-  const timeY = (value) => bottom - (value / maxTime) * plotHeight;
-  const svg = svgNode("svg", { viewBox: `0 0 ${width} ${height}`, "aria-hidden": "true" });
-
-  for (let index = 0; index <= 4; index += 1) {
-    const ratio = index / 4;
-    const y = top + ratio * plotHeight;
-    svg.append(svgNode("line", { x1: left, y1: y, x2: right, y2: y, class: "usage-grid-line" }));
-    svg.append(svgNode("text", { x: left - 8, y: y + 3, class: "usage-axis-label", "text-anchor": "end" }, formatTokens(maxTokens * (1 - ratio))));
-    svg.append(svgNode("text", { x: right + 8, y: y + 3, class: "usage-axis-label", "text-anchor": "start" }, `${(maxTime * (1 - ratio)).toFixed(1)}s`));
-  }
-
-  svg.append(svgNode("text", { x: left, y: 16, class: "usage-series-label token" }, "总 Token"));
-  svg.append(svgNode("text", { x: right, y: 16, class: "usage-series-label time", "text-anchor": "end" }, "模型耗时"));
-  const tokenPoints = metricPoints(samples, xFor, tokenY, "totalTokens");
-  const timePoints = metricPoints(samples, xFor, timeY, "totalTime");
-  if (tokenPoints) svg.append(svgNode("polyline", { points: tokenPoints, class: "usage-line token" }));
-  if (timePoints) svg.append(svgNode("polyline", { points: timePoints, class: "usage-line time" }));
-
-  samples.forEach((sample, index) => {
-    const x = xFor(index);
-    if (sample.totalTokens !== null) {
-      const point = svgNode("circle", { cx: x, cy: tokenY(sample.totalTokens), r: 4, class: "usage-point token" });
-      point.append(svgNode("title", {}, `请求 ${sample.request}：${formatTokens(sample.totalTokens)} Token`));
-      svg.append(point);
-    }
-    if (sample.totalTime !== null) {
-      const point = svgNode("circle", { cx: x, cy: timeY(sample.totalTime), r: 4, class: "usage-point time" });
-      point.append(svgNode("title", {}, `请求 ${sample.request}：${sample.totalTime.toFixed(2)} 秒`));
-      svg.append(point);
-    }
-    svg.append(svgNode("text", { x, y: bottom + 22, class: "usage-x-label", "text-anchor": "middle" }, `#${sample.request}`));
-  });
-
-  if (hasCost) {
-    const costTop = 245;
-    const costBottom = 292;
-    const maxCost = Math.max(0.000001, ...samples.map((sample) => sample.cost || 0));
-    const costY = (value) => costBottom - (value / maxCost) * (costBottom - costTop);
-    svg.append(svgNode("line", { x1: left, y1: costBottom, x2: right, y2: costBottom, class: "usage-grid-line" }));
-    svg.append(svgNode("text", { x: left, y: costTop - 10, class: "usage-series-label cost" }, `单次费用 · ${pricing.currency}`));
-    const costPoints = metricPoints(samples, xFor, costY, "cost");
-    if (costPoints) svg.append(svgNode("polyline", { points: costPoints, class: "usage-line cost" }));
-    samples.forEach((sample, index) => {
-      if (sample.cost === null) return;
-      const point = svgNode("circle", { cx: xFor(index), cy: costY(sample.cost), r: 3.5, class: "usage-point cost" });
-      point.append(svgNode("title", {}, `请求 ${sample.request}：${pricing.currency} ${sample.cost.toFixed(6)}`));
-      svg.append(point);
-    });
-  }
-
-  const breakdown = document.createElement("div");
-  breakdown.className = "usage-breakdown";
-  samples.forEach((sample) => {
-    const item = document.createElement("span");
-    const costText = sample.cost === null ? "" : ` · ${pricing.currency} ${sample.cost.toFixed(6)}`;
-    item.textContent = `#${sample.request}  ${formatTokens(sample.totalTokens)} tok · ${sample.totalTime === null ? "—" : `${sample.totalTime.toFixed(1)}s`}${costText}`;
-    breakdown.append(item);
-  });
-  target.replaceChildren(svg, breakdown);
-}
-
-function renderUsagePanel(events, status, panel, summary, chart, note) {
-  const finished = ["success", "failed", "cancelled"].includes(status);
-  const pricing = appState.snapshot?.pricing || {};
-  const samples = usageSamples(events, pricing);
-  panel.hidden = !finished || !samples.length;
-  if (panel.hidden) return;
-
-  const sum = (field) => samples.reduce((total, sample) => total + (sample[field] || 0), 0);
-  const promptTokens = sum("promptTokens");
-  const completionTokens = sum("completionTokens");
-  const totalTokens = sum("totalTokens");
-  const totalTime = sum("totalTime");
-  const hasPromptTokens = samples.some((sample) => sample.promptTokens !== null);
-  const hasCompletionTokens = samples.some((sample) => sample.completionTokens !== null);
-  const hasTotalTokens = samples.some((sample) => sample.totalTokens !== null);
-  const hasTotalTime = samples.some((sample) => sample.totalTime !== null);
-  const totalCost = samples.some((sample) => sample.cost !== null) ? sum("cost") : null;
-  const missingUsage = samples.some((sample) => (
-    sample.promptTokens === null || sample.completionTokens === null
-  ));
-  const cards = [
-    ["模型请求", `${samples.length} 次`],
-    ["输入 Token", formatTokens(hasPromptTokens ? promptTokens : null)],
-    ["输出 Token", formatTokens(hasCompletionTokens ? completionTokens : null)],
-    ["总 Token", formatTokens(hasTotalTokens ? totalTokens : null)],
-    ["模型耗时", hasTotalTime ? `${totalTime.toFixed(1)} 秒` : "—"],
-    ["估算费用", totalCost === null
-      ? (pricing.configured ? "不可用" : "未配置")
-      : `${pricing.currency} ${totalCost.toFixed(6)}`],
-  ];
-  summary.replaceChildren();
-  cards.forEach(([label, value]) => {
-    const item = document.createElement("span");
-    const small = document.createElement("small");
-    const strong = document.createElement("b");
-    small.textContent = label;
-    strong.textContent = value;
-    item.append(small, strong);
-    summary.append(item);
-  });
-  renderUsageChart(samples, chart, pricing);
-  note.textContent = pricing.configured
-    ? `费用按当前配置估算：输入 ${pricing.currency} ${pricing.input_per_million_tokens}/百万 Token，输出 ${pricing.currency} ${pricing.output_per_million_tokens}/百万 Token。${missingUsage ? " 部分请求未返回用量，汇总可能不完整。" : ""}`
-    : "尚未配置 Token 单价；设置 INPUT_PRICE_PER_1M_TOKENS 和 OUTPUT_PRICE_PER_1M_TOKENS 后即可显示费用曲线。";
 }
 
 function renderChecks(startup) {
@@ -520,126 +266,11 @@ function showWelcome() {
   elements.conversationTitle.textContent = "新任务";
 }
 
-function eventKind(type) {
-  if (["model_request", "model_response"].includes(type)) return "model";
-  if (["action", "execution"].includes(type)) return "action";
-  if (type === "verification") return "verification";
-  if (["recovery", "user_prompt", "user_response"].includes(type)) return "recovery";
-  if (["error", "web_task_error"].includes(type)) return "error";
-  if (["finish", "web_task_finished"].includes(type)) return "finish";
-  return "system";
-}
-
-function eventGlyph(type) {
-  return {
-    model: "✦", action: "↗", verification: "✓", recovery: "↺", error: "!", finish: "✓", system: "·",
-  }[eventKind(type)];
-}
-
-function summarizeEvent(event) {
-  const payload = event.payload || {};
-  if (event.type === "phase_change") return event.message || payload.reason || "状态已更新";
-  if (event.type === "observation") {
-    return [payload.current_app, payload.screen_width && `${payload.screen_width}×${payload.screen_height}`]
-      .filter(Boolean).join(" · ") || event.message;
-  }
-  if (event.type === "model_request") return "正在根据当前屏幕决定下一步操作";
-  if (event.type === "model_response") {
-    return truncate(payload.thinking || payload.raw_content || event.message, 220);
-  }
-  if (event.type === "action") return payload.action ? JSON.stringify(payload.action) : event.message;
-  if (event.type === "execution") return event.message || (payload.command_success ? "操作命令执行成功" : "操作命令执行失败");
-  if (event.type === "verification") return event.message || `${payload.status || ""} · ${payload.policy || ""}`;
-  if (event.type === "recovery") return event.message || payload.strategy || payload.decision?.strategy;
-  return event.message || "执行记录已更新";
-}
-
-function timelineEvents(events) {
-  const hiddenTypes = new Set(["metrics", "web_task_started", "web_task_finished"]);
-  return events.filter((event) => !hiddenTypes.has(event.type));
-}
-
-function processEvents(events) {
-  const usefulTypes = new Set([
-    "model_response", "action", "execution", "verification", "recovery",
-    "user_prompt", "user_response", "error", "note", "finish", "web_task_error",
-    "web_task_cancel_requested",
-  ]);
-  return events.filter((event) => usefulTypes.has(event.type));
-}
-
-function latestProcessText(events, task) {
-  const latestModelResponse = [...events].reverse().find((event) => event.type === "model_response");
-  const modelContent = latestModelResponse
-    ? String(
-      latestModelResponse.payload?.thinking
-      || latestModelResponse.payload?.raw_content
-      || latestModelResponse.message
-      || "",
-    ).trim()
-    : "";
-  if (modelContent) return truncate(modelContent, 260);
-  const latest = processEvents(events).at(-1);
-  if (latest) return truncate(summarizeEvent(latest), 260);
-  return phaseLabels[task?.phase] || "正在等待模型返回第一步计划…";
-}
-
 function renderProcessNotice(events) {
   const latestModelResponse = [...events].reverse().find((event) => event.type === "model_response");
   const protocolError = String(latestModelResponse?.payload?.protocol_error || "").trim();
   elements.processNotice.hidden = !protocolError;
   elements.processNotice.textContent = protocolError ? `输出格式错误 · ${protocolError}` : "";
-}
-
-function renderTimeline(events, target, { live = false, waitingText = null } = {}) {
-  const visible = timelineEvents(events).slice(-250);
-  target.replaceChildren();
-  visible.forEach((event) => {
-    const item = document.createElement("article");
-    item.className = "timeline-item";
-    item.dataset.kind = eventKind(event.type);
-    const marker = document.createElement("span");
-    marker.className = "timeline-marker";
-    marker.textContent = eventGlyph(event.type);
-    const body = document.createElement("div");
-    body.className = "timeline-body";
-    const head = document.createElement("header");
-    const title = document.createElement("b");
-    title.textContent = eventLabels[event.type] || event.type;
-    const meta = document.createElement("span");
-    const step = Number.isInteger(event.step) ? event.step : event.payload?.step;
-    meta.textContent = `${Number.isInteger(step) ? `第 ${step} 步 · ` : ""}${formatTime(event.timestamp)}`;
-    head.append(title, meta);
-    const summary = document.createElement("p");
-    summary.textContent = summarizeEvent(event);
-    body.append(head, summary);
-    if (event.payload && Object.keys(event.payload).length) {
-      const details = document.createElement("details");
-      const label = document.createElement("summary");
-      label.textContent = "查看详细信息";
-      const pre = document.createElement("pre");
-      pre.textContent = JSON.stringify(event.payload, null, 2);
-      details.append(label, pre);
-      body.append(details);
-    }
-    item.append(marker, body);
-    target.append(item);
-  });
-
-  if (live) {
-    const waiting = document.createElement("div");
-    waiting.className = "timeline-waiting";
-    const spinner = document.createElement("i");
-    const text = document.createElement("span");
-    text.textContent = waitingText || phaseLabels[appState.snapshot?.task?.phase] || "等待下一步执行…";
-    waiting.append(spinner, text);
-    target.append(waiting);
-  } else if (!visible.length) {
-    const empty = document.createElement("p");
-    empty.className = "history-empty";
-    empty.textContent = "没有可显示的执行记录";
-    target.append(empty);
-  }
 }
 
 function renderEvents() {
@@ -658,6 +289,7 @@ function renderEvents() {
     elements.taskUsageSummary,
     elements.taskUsageChart,
     elements.taskUsageNote,
+    appState.snapshot?.pricing || {},
   );
   const nearBottom = elements.conversationScroll.scrollHeight
     - elements.conversationScroll.scrollTop
@@ -665,6 +297,7 @@ function renderEvents() {
   if (!appState.processExpanded) return;
   renderTimeline(usefulEvents, elements.eventFeed, {
     live: isTaskBusy(task?.status),
+    waitingText: phaseLabels[task?.phase] || "等待下一步执行…",
   });
   if (nearBottom) requestAnimationFrame(() => {
     elements.conversationScroll.scrollTop = elements.conversationScroll.scrollHeight;
@@ -936,6 +569,7 @@ async function openTrajectory(filename) {
       elements.trajectoryUsageSummary,
       elements.trajectoryUsageChart,
       elements.trajectoryUsageNote,
+      appState.snapshot?.pricing || {},
     );
     renderTrajectoryList();
     closeSidebar();

@@ -1,6 +1,7 @@
 # PhoneAgent Architecture
 
-This document describes PhoneAgent `v0.1.4` as implemented in the repository. PhoneAgent is
+This document describes the converged PhoneAgent runtime on the `v0.2.0` refactor branch.
+PhoneAgent is
 deliberately scoped as a Research Runtime / Evaluation Runtime for real Android devices.
 
 ## Runtime overview
@@ -38,6 +39,11 @@ trajectory event stream.
 Every runtime event is created once as an `AgentEvent`. The same event instance is sent to
 the callback and serialized by `TrajectoryRecorder`, preventing timestamp, step, message, or
 payload drift between live integrations and saved trajectories.
+
+The public `PhoneAgent` owns state transitions and event creation. Its step coordinator delegates
+to explicit observation, response-selection, action-acceptance, device-execution, and
+verification/recovery stages. Extracted stages return typed internal results; they do not own a
+second state machine or event stream.
 
 ## Main components
 
@@ -112,13 +118,21 @@ back to the model with the action call alone. XML envelopes, JSON, Markdown fenc
 calls, extra trailing text, and incomplete strings are rejected. The runtime does not guess or
 repair an executable action.
 
-Accepted action text is parsed with Python AST/literal handling and validated against the
-action allow-list and parameter constraints. Model output is never evaluated or executed as
-Python code. A protocol failure enters the existing bounded strict-action recovery path.
+Accepted action text is handled by the side-effect-free `phoneagent.actions.protocol` boundary.
+It uses Python AST/literal handling and validates against the action allow-list and parameter
+constraints. Model output is never evaluated or executed as Python code. A protocol failure
+enters the existing bounded strict-action recovery path.
+
+Synchronous and asynchronous OpenAI-compatible transports have separate stream I/O and
+cancellation mechanics but share one response accumulator. Reasoning/content collection, action
+boundary detection, finish reasons, usage normalization, truncation diagnostics, and final
+`ModelResponse` construction therefore have one implementation.
 
 ### Execution and confirmation
 
-`ActionHandler` maps one validated action to Android operations. Supported operations include
+`phoneagent.actions.policy` owns side-effect-free confirmation and duration rules.
+`ActionHandler` is the device-dispatch boundary for an already validated action. It still
+validates injected programmatic actions defensively before execution. Supported operations include
 launch, tap, type, swipe, back, home, double tap, long press, wait, note, API callback, user
 interaction/takeover, notification/quick-settings panel control, and finish.
 
@@ -186,7 +200,8 @@ recovery branches; the model can select explicit navigation actions after a fres
 ### Trajectory
 
 `TrajectoryRecorder` writes a temporary JSON file and atomically replaces the final path.
-Trajectory schema version remains `1.0` in PhoneAgent `v0.1.4`.
+Trajectory schema version remains `1.0` through the PhoneAgent `v0.2.0` refactor, so existing
+`v0.1.4` runs remain readable.
 
 Each event contains its type, timestamp, message, payload, and optional top-level step. The
 final state snapshot is included for convenience, but the event stream is authoritative for
@@ -195,9 +210,24 @@ execution history.
 Trajectories may contain task text, model content, packages, timestamps, action parameters,
 and evidence. They must be reviewed and redacted before publication.
 
+### Offline evaluation
+
+`phoneagent-eval` reads saved trajectories without initializing a model or device. It reports
+runtime completion, steps, actions, recoveries, structured failures, latency, and Token usage.
+Runtime completion is deliberately not treated as task correctness. `task_success` enters a
+report only through an external human or deterministic annotation keyed by trajectory `run_id`.
+
+### Web Console task isolation
+
+The Web Console reuses one checked agent and permits one active task. Every callback carries an
+internal task-generation context, including callbacks reached through `asyncio.to_thread`.
+Callbacks whose generation does not match the current task are ignored, and a terminal worker
+finishes cleanup before the next task starts. This prevents delayed events, notes, or prompts
+from an older task mutating the next task snapshot.
+
 ## Trust boundaries
 
-PhoneAgent `v0.1.4` does not claim independent task-level correctness:
+PhoneAgent `v0.2.0` does not claim independent task-level correctness:
 
 - screen change does not prove that a coordinate target was semantically correct;
 - secure or protected surfaces may be unobservable;
