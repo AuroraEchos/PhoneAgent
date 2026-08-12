@@ -105,23 +105,29 @@ not a complete dynamic application catalog.
 summaries, context trimming, and compact strict-protocol recovery.
 `phoneagent.agent` remains responsible for orchestration rather than prompt-history mechanics.
 
-The canonical response may contain inert reasoning followed by one terminal action call:
+The canonical response content contains one action call and nothing else:
 
 ```text
-The visible target is the Settings icon, so open it directly.
 do(action="Tap", element=[500, 300])
 ```
 
-The response must end with exactly one complete `do(...)` or `finish(...)` call. Any text before
-it is inert reasoning and is retained only for observability; assistant history is serialized
-back to the model with the action call alone. XML envelopes, JSON, Markdown fenced code, multiple
-calls, extra trailing text, and incomplete strings are rejected. The runtime does not guess or
-repair an executable action.
+Provider `reasoning_content` may be retained for observability, but ordinary response `content`
+is action-only. The parser remains able to read legacy inert prefix text for client compatibility;
+assistant history is always serialized back with the action call alone. XML envelopes, JSON,
+Markdown fenced code, multiple calls, extra trailing text, and incomplete strings are rejected.
+The runtime does not guess or repair an executable action.
 
 Accepted action text is handled by the side-effect-free `phoneagent.actions.protocol` boundary.
-It uses Python AST/literal handling and validates against the action allow-list and parameter
-constraints. Model output is never evaluated or executed as Python code. A protocol failure
-enters the existing bounded strict-action recovery path.
+It uses Python AST/literal handling and validates each action against a closed keyword schema.
+Unknown fields, duplicate keywords, missing required fields, dynamic expressions, and invalid
+values are rejected. Model output is never evaluated or executed as Python code.
+
+The first outer-protocol or inner-schema failure receives one ephemeral retry against the same
+screenshot and goal. The retry does not advance the Agent step, consume recovery budget, append
+the rejected output to model history, or dispatch a device command; its completion is capped at
+512 tokens by default. `protocol_retry` and rejected-response metrics preserve the wasted latency
+and Token evidence. If that retry also fails, the runtime enters the existing bounded
+strict-action recovery path on the next step.
 
 Synchronous and asynchronous OpenAI-compatible transports have separate stream I/O and
 cancellation mechanics but share one response accumulator. Reasoning/content collection, action

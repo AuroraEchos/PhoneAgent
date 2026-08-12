@@ -3,10 +3,16 @@ from __future__ import annotations
 import unittest
 
 from phoneagent.actions import ActionParseError, do, finish, parse_action, validate_action
+from phoneagent.config.prompts_zh import build_system_prompt
 from phoneagent.model import ModelClient, ModelProtocolError, ModelResponse, ModelResponseParser
 
 
 class ActionProtocolTests(unittest.TestCase):
+    def test_system_prompt_requires_action_only_content(self) -> None:
+        prompt = build_system_prompt()
+        self.assertIn("响应正文只能包含唯一一个完整的", prompt)
+        self.assertIn("content 必须是纯动作", prompt)
+
     def test_programmatic_action_constructors_remain_stable(self) -> None:
         self.assertEqual(do(action="Back"), {"_metadata": "do", "action": "Back"})
         self.assertEqual(
@@ -114,6 +120,33 @@ class ActionProtocolTests(unittest.TestCase):
         for sample in invalid:
             with self.subTest(sample=sample), self.assertRaises(ActionParseError):
                 parse_action(sample)
+
+    def test_action_schema_rejects_unknown_duplicate_and_missing_keywords(self) -> None:
+        invalid = (
+            'do(action="Back", unexpected="value")',
+            'do(action="Tap", element=[1,2], element=[3,4])',
+            'do(action="Type")',
+            'do(action="Note")',
+            'do(action="Call_API", instruction="   ")',
+            'finish(message="done", success=True, unexpected="value")',
+            'finish(message="one", message="two", success=True)',
+        )
+        for sample in invalid:
+            with self.subTest(sample=sample), self.assertRaises(ActionParseError):
+                parse_action(sample)
+
+    def test_model_protocol_errors_have_precise_codes(self) -> None:
+        invalid = {
+            "analysis only": "missing_action",
+            'do(action="Back"': "incomplete_action",
+            'do(action="Back") trailing': "trailing_content",
+            'do(action="Back")\ndo(action="Home")': "multiple_actions",
+            '<action>do(action="Back")</action>': "legacy_action_envelope",
+        }
+        for sample, expected in invalid.items():
+            with self.subTest(sample=sample), self.assertRaises(ModelProtocolError) as caught:
+                ModelResponseParser.parse(sample)
+            self.assertEqual(caught.exception.error_code, expected)
 
     def test_canonical_terminal_action(self) -> None:
         thinking, action_text = ModelResponseParser.parse('do(action="Tap", element=[500, 300])')

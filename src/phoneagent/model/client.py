@@ -34,11 +34,13 @@ class ModelProtocolError(RuntimeError):
         raw_content: str | None = None,
         finish_reason: str | None = None,
         metrics: dict[str, Any] | None = None,
+        error_code: str = "model_protocol_error",
     ):
         super().__init__(message)
         self.raw_content = raw_content
         self.finish_reason = finish_reason
         self.metrics = dict(metrics or {})
+        self.error_code = error_code
 
     @property
     def truncated(self) -> bool:
@@ -202,28 +204,52 @@ class ModelResponseParser:
     def parse(cls, raw_content: str) -> tuple[str, str]:
         content = (raw_content or "").strip()
         if not content:
-            raise ModelProtocolError("Model response content is empty")
+            raise ModelProtocolError(
+                "Model response content is empty",
+                error_code="missing_action",
+            )
         if cls.LEGACY_ACTION_TAG_RE.search(content):
-            raise ModelProtocolError("XML action envelopes are not supported")
+            raise ModelProtocolError(
+                "XML action envelopes are not supported",
+                error_code="legacy_action_envelope",
+            )
 
         candidates = list(cls.ACTION_CALL_RE.finditer(content))
+        if not candidates:
+            raise ModelProtocolError(
+                "Model response did not contain a do(...) or finish(...) call",
+                error_code="missing_action",
+            )
         terminal: list[tuple[int, int]] = []
         for candidate in candidates:
             end = cls._balanced_call_end(content, candidate.start())
             if end is not None and not content[end:].strip():
                 terminal.append((candidate.start(), end))
+        if terminal:
+            action_start, action_end = terminal[0]
+            if any(candidate.start() < action_start for candidate in candidates):
+                raise ModelProtocolError(
+                    "Model response contained multiple do(...) or finish(...) calls",
+                    error_code="multiple_actions",
+                )
+            return content[:action_start].strip(), content[action_start:action_end].strip()
 
-        if len(terminal) != 1:
+        first_start = candidates[0].start()
+        first_end = cls._balanced_call_end(content, first_start)
+        if first_end is None:
             raise ModelProtocolError(
-                "Model response must end with exactly one complete do(...) or finish(...) call"
+                "Model response ended with an incomplete action call",
+                error_code="incomplete_action",
             )
-
-        action_start, action_end = terminal[0]
-        if any(candidate.start() < action_start for candidate in candidates):
+        if len(candidates) > 1:
             raise ModelProtocolError(
-                "Model response must contain exactly one do(...) or finish(...) call"
+                "Model response contained multiple do(...) or finish(...) calls",
+                error_code="multiple_actions",
             )
-        return content[:action_start].strip(), content[action_start:action_end].strip()
+        raise ModelProtocolError(
+            "Model response contained text after the action call",
+            error_code="trailing_content",
+        )
 
     @staticmethod
     def _balanced_call_end(text: str, start: int) -> int | None:
@@ -362,6 +388,7 @@ class _StreamResponseState:
                 raw_content=raw_content,
                 finish_reason=self.finish_reason,
                 metrics=error_metrics,
+                error_code="missing_action",
             )
         try:
             thinking, action = ModelResponseParser.parse(raw_content)
@@ -371,6 +398,7 @@ class _StreamResponseState:
                 raw_content=raw_content,
                 finish_reason=self.finish_reason,
                 metrics=error_metrics,
+                error_code=exc.error_code,
             ) from exc
         if not thinking and reasoning_content:
             thinking = reasoning_content
@@ -380,6 +408,7 @@ class _StreamResponseState:
                 raw_content=raw_content,
                 finish_reason=self.finish_reason,
                 metrics=error_metrics,
+                error_code="missing_action",
             )
         if self.time_to_thinking_end is None and thinking:
             self.time_to_thinking_end = total_time
@@ -420,6 +449,7 @@ class BaseModelClient(ABC):
         print_stream: bool = True,
         stream_callback: StreamCallback | None = None,
         cancel_event: Event | None = None,
+        max_tokens: int | None = None,
     ) -> ModelResponse:
         """Send a request and return a parsed, protocol-conformant response."""
 
@@ -449,6 +479,7 @@ class OpenAIModelClient(BaseModelClient):
         print_stream: bool = True,
         stream_callback: StreamCallback | None = None,
         cancel_event: Event | None = None,
+        max_tokens: int | None = None,
     ) -> ModelResponse:
         """Send a request and retry transient API failures with backoff."""
         if not messages:
@@ -464,6 +495,7 @@ class OpenAIModelClient(BaseModelClient):
                     print_stream=print_stream,
                     stream_callback=stream_callback,
                     cancel_event=cancel_event,
+                    max_tokens=max_tokens,
                 )
                 response.attempts = attempt
                 return response
@@ -487,6 +519,7 @@ class OpenAIModelClient(BaseModelClient):
         print_stream: bool,
         stream_callback: StreamCallback | None,
         cancel_event: Event | None,
+        max_tokens: int | None,
     ) -> ModelResponse:
         self._raise_if_cancelled(cancel_event)
         stream_state = _StreamResponseState(started_at=time.monotonic())
@@ -494,7 +527,7 @@ class OpenAIModelClient(BaseModelClient):
         request_kwargs = {
             "messages": messages,
             "model": self.config.model_name,
-            "max_tokens": self.config.max_tokens,
+            "max_tokens": self.config.max_tokens if max_tokens is None else max_tokens,
             "temperature": self.config.temperature,
             "top_p": self.config.top_p,
             "frequency_penalty": self.config.frequency_penalty,
@@ -723,6 +756,7 @@ class AsyncOpenAIModelClient(BaseModelClient):
         print_stream: bool = True,
         stream_callback: StreamCallback | None = None,
         cancel_event: Event | None = None,
+        max_tokens: int | None = None,
     ) -> ModelResponse:
         """Send an async request and retry transient API failures with backoff."""
         if not messages:
@@ -738,6 +772,7 @@ class AsyncOpenAIModelClient(BaseModelClient):
                     print_stream=print_stream,
                     stream_callback=stream_callback,
                     cancel_event=cancel_event,
+                    max_tokens=max_tokens,
                 )
                 response.attempts = attempt
                 return response
@@ -758,6 +793,7 @@ class AsyncOpenAIModelClient(BaseModelClient):
         print_stream: bool,
         stream_callback: StreamCallback | None,
         cancel_event: Event | None,
+        max_tokens: int | None,
     ) -> ModelResponse:
         OpenAIModelClient._raise_if_cancelled(cancel_event)
         stream_state = _StreamResponseState(started_at=time.monotonic())
@@ -765,7 +801,7 @@ class AsyncOpenAIModelClient(BaseModelClient):
         request_kwargs = {
             "messages": messages,
             "model": self.config.model_name,
-            "max_tokens": self.config.max_tokens,
+            "max_tokens": self.config.max_tokens if max_tokens is None else max_tokens,
             "temperature": self.config.temperature,
             "top_p": self.config.top_p,
             "frequency_penalty": self.config.frequency_penalty,

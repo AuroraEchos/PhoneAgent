@@ -117,8 +117,14 @@ class RecoveryManager:
     }
     _MODEL_PROTOCOL_ERRORS = {
         "action_parse_error",
+        "incomplete_action",
+        "invalid_action_arguments",
+        "legacy_action_envelope",
+        "missing_action",
         "model_output_truncated",
         "model_protocol_error",
+        "multiple_actions",
+        "trailing_content",
     }
     _SAFE_RETRY_ACTIONS = {"Launch", "Wait", "Home"}
 

@@ -30,6 +30,8 @@ Observe → Plan → Execute → Verify → Recover → Repeat
 - 基于截图的视觉理解和任务规划。
 - 只执行响应末尾唯一且完整的 `do(...)` 或 `finish(...)` 调用；它前面的文本仅作为
   思考记录，不接受 XML、JSON、代码块、多个调用、尾随文本或残缺输出。
+- 默认要求模型正文只包含动作调用；首次协议错误会在同一 Agent step 内进行一次受限的
+  action-only 重试，不触碰设备，也不计作恢复。
 - 明确入口应用的任务会在首次观察后优先确定性启动；其他 `Launch` 仍按需解析别名、检查安装状态并验证前台包名。
 - 支持动作执行后的状态验证。
 - 通知与控制中心使用语义动作：优先执行 `cmd statusbar`，打开无效时由执行层自动使用左上角或右上角下拉手势兜底，并将内部尝试写入轨迹。
@@ -45,6 +47,7 @@ Observe → Plan → Execute → Verify → Recover → Repeat
 
 - 模型文本不会作为 Python 代码执行；动作必须通过 AST、白名单和参数校验。
 - 协议错误进入 strict-action recovery，不会尝试提取多个动作或修补字符串。
+- 动作参数采用封闭 Schema：未知字段、重复关键字和缺失的必需参数均在执行前拒绝。
 - 只有 `Launch`、`Wait`、`Home` 可在无敏感标记时进行一次安全重试。
 - `Tap`、`Type`、`Swipe`、`Back` 等动作不会被自动重放。
 - `Tap`、`Double Tap`、`Long Press` 和 `Swipe` 默认启用执行前截图新鲜度守卫；仅诊断时
