@@ -349,14 +349,6 @@ class PhoneAgent:
             return None
         return target
 
-    def _execute_step(
-        self,
-        user_prompt: str | None = None,
-        is_first: bool = False,
-    ) -> StepResult:
-        """Synchronous wrapper – delegates to the async implementation."""
-        return asyncio.run(self._execute_step_async(user_prompt=user_prompt, is_first=is_first))
-
     async def _execute_step_async(
         self,
         user_prompt: str | None = None,
@@ -825,14 +817,6 @@ class PhoneAgent:
             phase=self.state.phase.value,
         )
 
-    def _verify_action(
-        self,
-        action: dict[str, Any],
-        execution: ActionResult,
-        before: ScreenObservation,
-    ) -> VerificationResult:
-        return asyncio.run(self._verify_action_async(action, execution, before))
-
     async def _verify_action_async(
         self,
         action: dict[str, Any],
@@ -975,21 +959,6 @@ class PhoneAgent:
         self._record_verification(action, result)
         return result
 
-    def _perform_recovery(
-        self,
-        *,
-        action: dict[str, Any] | None,
-        execution: ActionResult,
-        verification: VerificationResult,
-    ) -> _RecoveryExecution:
-        return asyncio.run(
-            self._perform_recovery_async(
-                action=action,
-                execution=execution,
-                verification=verification,
-            )
-        )
-
     async def _perform_recovery_async(
         self,
         *,
@@ -1085,9 +1054,6 @@ class PhoneAgent:
         self._record_recovery_outcome(outcome)
         return _RecoveryExecution(outcome=outcome)
 
-    def _recover_by_observation(self, decision) -> _RecoveryExecution:
-        return asyncio.run(self._recover_by_observation_async(decision))
-
     async def _recover_by_observation_async(self, decision) -> _RecoveryExecution:
         if self.agent_config.recovery.retry_delay_seconds > 0:
             await asyncio.sleep(self.agent_config.recovery.retry_delay_seconds)
@@ -1113,13 +1079,6 @@ class PhoneAgent:
             )
             self._record_recovery_outcome(outcome)
             return _RecoveryExecution(outcome=outcome)
-
-    def _recover_by_action_retry(
-        self,
-        decision,
-        action: dict[str, Any] | None,
-    ) -> _RecoveryExecution:
-        return asyncio.run(self._recover_by_action_retry_async(decision, action))
 
     async def _recover_by_action_retry_async(
         self,
@@ -1183,25 +1142,6 @@ class PhoneAgent:
             action_recovered=recovered,
             verification=retry_verification,
             observation=self._pending_observation,
-        )
-
-    def _handle_runtime_failure(
-        self,
-        *,
-        message: str,
-        error_code: str,
-        thinking: str,
-        raw_model_output: str | None,
-        action: dict[str, Any] | None,
-    ) -> StepResult:
-        return asyncio.run(
-            self._handle_runtime_failure_async(
-                message=message,
-                error_code=error_code,
-                thinking=thinking,
-                raw_model_output=raw_model_output,
-                action=action,
-            )
         )
 
     async def _handle_runtime_failure_async(
@@ -1268,26 +1208,6 @@ class PhoneAgent:
             recovery=recovery_payload,
             phase=self.state.phase.value,
         )
-
-    def _next_observation(self) -> ScreenObservation:
-        """Synchronous wrapper – delegates to the async implementation."""
-        return asyncio.run(self._next_observation_async())
-
-    def _observe_with_retries(
-        self,
-        *,
-        retries: int | None = None,
-        retry_delay: float | None = None,
-    ) -> ScreenObservation:
-        """Synchronous wrapper – delegates to the async implementation."""
-        return asyncio.run(
-            self._observe_with_retries_async(retries=retries, retry_delay=retry_delay)
-        )
-
-    # ------------------------------------------------------------------
-    # Async helpers – run blocking I/O in a thread so the event loop
-    # stays responsive for cancellation and concurrent Wait actions.
-    # ------------------------------------------------------------------
 
     async def _next_observation_async(self) -> ScreenObservation:
         if self._pending_observation is not None:
@@ -1426,10 +1346,6 @@ class PhoneAgent:
             outcome.message,
             {**outcome.to_dict(), "step": self._step_count, "stage": "outcome"},
         )
-
-    def _observation_from_state(self) -> ScreenObservation:
-        """Best-effort fallback used only for a bounded safe recovery retry."""
-        return asyncio.run(self._observation_from_state_async())
 
     async def _observation_from_state_async(self) -> ScreenObservation:
         """Async variant of :meth:`_observation_from_state`."""

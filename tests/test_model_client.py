@@ -72,6 +72,12 @@ class _BlockingCompletions:
         return self.stream
 
 
+class _StatusError(RuntimeError):
+    def __init__(self, status_code: int, message: str = "provider error") -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class _FakeAsyncStream:
     def __init__(self, chunks: list[SimpleNamespace]) -> None:
         self._chunks = iter(chunks)
@@ -233,3 +239,34 @@ def test_async_transport_uses_the_same_response_and_usage_semantics() -> None:
         assert completions.stream.closed is True
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (ModelProtocolError("invalid action"), False),
+        (ModelRequestCancelled("cancelled"), False),
+        (_StatusError(400), False),
+        (_StatusError(408), True),
+        (_StatusError(429), True),
+        (_StatusError(503), True),
+        (TimeoutError("timeout"), True),
+        (ValueError("bad config"), False),
+    ],
+)
+def test_sync_and_async_transports_share_retry_classification(
+    error: Exception,
+    expected: bool,
+) -> None:
+    assert ModelClient._is_retryable(error) is expected
+    assert AsyncOpenAIModelClient._is_retryable(error) is expected
+
+
+def test_sync_and_async_transports_share_provider_normalization() -> None:
+    usage = SimpleNamespace(prompt_tokens="12", completion_tokens=3, total_tokens="invalid")
+    content = ["a", {"text": "b"}, SimpleNamespace(text="c"), {"ignored": "d"}]
+
+    assert ModelClient._extract_usage(usage) == (12, 3, None)
+    assert AsyncOpenAIModelClient._extract_usage(usage) == (12, 3, None)
+    assert ModelClient._content_to_text(content) == "abc"
+    assert AsyncOpenAIModelClient._content_to_text(content) == "abc"

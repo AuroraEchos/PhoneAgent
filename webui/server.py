@@ -157,6 +157,10 @@ class ConsoleRequestHandler(BaseHTTPRequestHandler):
             "/": STATIC_ROOT / "index.html",
             "/index.html": STATIC_ROOT / "index.html",
             "/app.js": STATIC_ROOT / "app.js",
+            "/api.js": STATIC_ROOT / "api.js",
+            "/state.js": STATIC_ROOT / "state.js",
+            "/timeline.js": STATIC_ROOT / "timeline.js",
+            "/usage.js": STATIC_ROOT / "usage.js",
             "/style.css": STATIC_ROOT / "style.css",
         }
         path = mapping.get(request_path)

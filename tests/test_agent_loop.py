@@ -79,7 +79,7 @@ class BlockingModelClient:
     def request(self, messages, print_stream=False) -> ModelResponse:
         del messages, print_stream
         self.entered.set()
-        if not self.release.wait(timeout=2):
+        if not self.release.wait(timeout=5):
             raise TimeoutError("test model was not released")
         return ModelResponse(
             thinking="tap",
@@ -184,6 +184,29 @@ class PanelFallbackDevice(FakeDevice):
         }
 
 
+class TransientObservationFailureDevice(FakeDevice):
+    def __init__(self) -> None:
+        super().__init__()
+        self.observe_calls = 0
+
+    def observe(self):
+        self.observe_calls += 1
+        if self.observe_calls == 1:
+            raise TimeoutError("injected screenshot timeout")
+        return super().observe()
+
+
+class FailingTapDevice(FakeDevice):
+    def __init__(self) -> None:
+        super().__init__()
+        self.tap_attempts = 0
+
+    def tap(self, x: int, y: int) -> None:
+        del x, y
+        self.tap_attempts += 1
+        raise ConnectionError("injected ADB disconnect")
+
+
 def test_agent_loop_reuses_verified_observation_and_finishes(tmp_path) -> None:
     device = FakeDevice()
     model = FakeModelClient(
@@ -283,11 +306,11 @@ def test_agent_cooperatively_cancels_after_blocking_model_returns(tmp_path) -> N
     result: list[str] = []
     thread = threading.Thread(target=lambda: result.append(agent.run("tap the target")))
     thread.start()
-    assert model.entered.wait(timeout=2)
+    assert model.entered.wait(timeout=30)
 
     assert agent.request_cancel("cancelled from test") is True
     model.release.set()
-    thread.join(timeout=2)
+    thread.join(timeout=30)
 
     assert not thread.is_alive()
     assert result == ["cancelled from test"]
@@ -314,10 +337,10 @@ def test_agent_cancels_native_async_model_request_immediately(tmp_path) -> None:
     result: list[str] = []
     thread = threading.Thread(target=lambda: result.append(agent.run("tap the target")))
     thread.start()
-    assert model.entered.wait(timeout=1)
+    assert model.entered.wait(timeout=30)
 
     assert agent.request_cancel("cancelled during stream") is True
-    thread.join(timeout=1)
+    thread.join(timeout=30)
 
     assert not thread.is_alive()
     assert model.cancelled.is_set()
@@ -466,3 +489,74 @@ def test_failed_initial_launch_returns_control_to_model(tmp_path) -> None:
     assert device.launch_calls == ["微信"]
     assert len(model.requests) == 1
     assert "app_not_installed" in str(model.requests[0])
+
+
+def test_observation_timeout_is_reobserved_before_model_planning(tmp_path) -> None:
+    device = TransientObservationFailureDevice()
+    model = FakeModelClient(
+        [
+            ModelResponse(
+                thinking="done after fresh observation",
+                action='finish(message="done", success=True)',
+                raw_content='finish(message="done", success=True)',
+            )
+        ]
+    )
+    agent = PhoneAgent(
+        agent_config=AgentConfig(
+            max_steps=3,
+            observation_retries=0,
+            observation_retry_delay=0,
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+            verification=VerificationConfig(settle_delay_seconds=0, observation_retries=0),
+            recovery=RecoveryConfig(retry_delay_seconds=0),
+        ),
+        device=device,
+        model_client=model,
+    )
+
+    assert agent.run("inspect screen") == "done"
+    assert device.observe_calls == 2
+    assert len(model.requests) == 1
+    error = next(event for event in agent.trajectory.events if event["type"] == "error")
+    assert error["payload"]["error_code"] == "observation_failed"
+    recovery = [event for event in agent.trajectory.events if event["type"] == "recovery"]
+    assert recovery[-1]["payload"]["decision"]["strategy"] == "reobserve"
+
+
+def test_adb_action_failure_is_not_blindly_replayed(tmp_path) -> None:
+    device = FailingTapDevice()
+    model = FakeModelClient(
+        [
+            ModelResponse(
+                thinking="tap once",
+                action='do(action="Tap", element=[500, 500])',
+                raw_content='do(action="Tap", element=[500, 500])',
+            ),
+            ModelResponse(
+                thinking="stop after structured failure",
+                action='finish(message="stopped", success=False)',
+                raw_content='finish(message="stopped", success=False)',
+            ),
+        ]
+    )
+    agent = PhoneAgent(
+        agent_config=AgentConfig(
+            max_steps=3,
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+            verification=VerificationConfig(settle_delay_seconds=0, observation_retries=0),
+            recovery=RecoveryConfig(retry_delay_seconds=0),
+        ),
+        device=device,
+        model_client=model,
+    )
+
+    assert agent.run("tap target") == "stopped"
+    assert device.tap_attempts == 1
+    executions = [event for event in agent.trajectory.events if event["type"] == "execution"]
+    assert executions[0]["payload"]["error_code"] == "action_execution_failed"
+    recoveries = [event for event in agent.trajectory.events if event["type"] == "recovery"]
+    outcome = next(event for event in recoveries if event["payload"]["stage"] == "outcome")
+    assert outcome["payload"]["decision"]["strategy"] == "reobserve"

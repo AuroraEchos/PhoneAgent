@@ -197,9 +197,11 @@ def get_screenshot(
     logger.warning("Screenshot capture failed after %d attempts", retries + 1)
     if not allow_fallback:
         if isinstance(last_exception, ScreenshotCaptureError):
-            raise
+            raise last_exception
         if isinstance(last_exception, ADBCommandError):
-            raise ScreenshotTimeoutError(str(last_exception)) from last_exception
+            if last_exception.reason and "timed out" in last_exception.reason.casefold():
+                raise ScreenshotTimeoutError(str(last_exception)) from last_exception
+            raise ScreenshotCaptureError(str(last_exception)) from last_exception
         raise ScreenshotCaptureError(str(last_exception)) from last_exception
 
     return _create_fallback_screenshot(

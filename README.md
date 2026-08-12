@@ -307,6 +307,21 @@ runs/trajectory_xxxxx.json
 
 `AgentState` 快照只表示任务结束时的最终状态，事件流是阶段和执行历史的权威来源。
 
+## 评测报告
+
+运行时接受 `finish(success=True)` 并不等于任务在真实设备上语义正确。完成实机任务并进行
+人工或确定性判定后，可以汇总 trajectory：
+
+```bash
+uv run phoneagent-eval runs \
+  --annotations evaluation/annotations.json \
+  --output evaluation/report.json
+```
+
+报告严格区分运行时自报成功率和外部判定的任务成功率，同时汇总步数、恢复、错误码、模型
+耗时与 Token。评测流程和标注格式见 [`docs/EVALUATION.md`](docs/EVALUATION.md)，发布前的
+真机回归步骤和记录表见 [`docs/REAL_DEVICE_REGRESSION.md`](docs/REAL_DEVICE_REGRESSION.md)。
+
 ## 开发
 
 ```bash

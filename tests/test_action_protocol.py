@@ -2,11 +2,119 @@ from __future__ import annotations
 
 import unittest
 
-from phoneagent.actions import ActionParseError, parse_action
+from phoneagent.actions import ActionParseError, do, finish, parse_action, validate_action
 from phoneagent.model import ModelClient, ModelProtocolError, ModelResponse, ModelResponseParser
 
 
 class ActionProtocolTests(unittest.TestCase):
+    def test_programmatic_action_constructors_remain_stable(self) -> None:
+        self.assertEqual(do(action="Back"), {"_metadata": "do", "action": "Back"})
+        self.assertEqual(
+            finish(message="done", success=False, reason="test"),
+            {"_metadata": "finish", "message": "done", "success": False, "reason": "test"},
+        )
+
+    def test_finish_validation_normalizes_message_and_requires_boolean_success(self) -> None:
+        self.assertEqual(
+            validate_action({"_metadata": "finish", "message": 42, "success": True})["message"],
+            "42",
+        )
+        self.assertEqual(
+            validate_action({"_metadata": "finish", "message": "   ", "success": True})[
+                "message"
+            ],
+            "Task completed",
+        )
+        with self.assertRaisesRegex(ActionParseError, "success must be a boolean"):
+            validate_action({"_metadata": "finish", "success": 1})
+
+    def test_validation_rejects_missing_or_unknown_action_contract(self) -> None:
+        invalid = (
+            None,
+            {},
+            {"_metadata": "do"},
+            {"_metadata": "do", "action": ""},
+            {"_metadata": "do", "action": "ExecuteShell"},
+            {"_metadata": "do", "action": "Launch", "app": "   "},
+        )
+        for action in invalid:
+            with self.subTest(action=action), self.assertRaises(ActionParseError):
+                validate_action(action)  # type: ignore[arg-type]
+
+    def test_type_and_policy_fields_are_normalized_with_safety_limits(self) -> None:
+        action = validate_action(
+            {
+                "_metadata": "do",
+                "action": "type_name",
+                "text": 123,
+                "clear": True,
+                "risk_level": " HIGH ",
+                "sensitive": False,
+            }
+        )
+        self.assertEqual(action["action"], "Type")
+        self.assertEqual(action["text"], "123")
+        self.assertEqual(action["risk_level"], "high")
+
+        invalid = (
+            {"_metadata": "do", "action": "Type", "text": "x" * 20_001},
+            {"_metadata": "do", "action": "Type", "clear": "yes"},
+            {"_metadata": "do", "action": "Wait", "duration": {}},
+            {"_metadata": "do", "action": "Back", "sensitive": 1},
+            {"_metadata": "do", "action": "Back", "requires_confirmation": "yes"},
+            {"_metadata": "do", "action": "Back", "risk_level": "critical"},
+        )
+        for candidate in invalid:
+            with self.subTest(candidate=candidate), self.assertRaises(ActionParseError):
+                validate_action(candidate)
+
+    def test_gesture_duration_and_coordinate_types_are_strict(self) -> None:
+        swipe = validate_action(
+            {
+                "_metadata": "do",
+                "action": "Swipe",
+                "start": (0, 999),
+                "end": [500, 500],
+                "duration_ms": "250",
+            }
+        )
+        self.assertEqual(swipe["duration_ms"], 250)
+
+        invalid = (
+            {"_metadata": "do", "action": "Tap", "element": [True, 2]},
+            {"_metadata": "do", "action": "Long Press", "element": [1, 2], "duration_ms": 0},
+            {
+                "_metadata": "do",
+                "action": "Swipe",
+                "start": [1, 2],
+                "end": [3, 4],
+                "duration_ms": False,
+            },
+            {
+                "_metadata": "do",
+                "action": "Swipe",
+                "start": [1, 2],
+                "end": [3, 4],
+                "duration_ms": "invalid",
+            },
+        )
+        for candidate in invalid:
+            with self.subTest(candidate=candidate), self.assertRaises(ActionParseError):
+                validate_action(candidate)
+
+    def test_action_calls_reject_positional_dynamic_and_expansion_arguments(self) -> None:
+        invalid = (
+            'do("Back")',
+            'finish("done")',
+            'do(action=unknown_name)',
+            'finish(message=unknown_name)',
+            'do(**{"action": "Back"})',
+            'finish(**{"success": True})',
+        )
+        for sample in invalid:
+            with self.subTest(sample=sample), self.assertRaises(ActionParseError):
+                parse_action(sample)
+
     def test_canonical_terminal_action(self) -> None:
         thinking, action_text = ModelResponseParser.parse('do(action="Tap", element=[500, 300])')
         action = parse_action(action_text)

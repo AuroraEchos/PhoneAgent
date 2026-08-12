@@ -1,9 +1,114 @@
 from __future__ import annotations
 
-from phoneagent.actions import ActionResult, do
+import pytest
+
+from phoneagent.actions import ActionResult, do, finish
 from phoneagent.runtime import ActionVerifier, VerificationConfig, VerificationStatus
 
 from conftest import make_observation
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("settle_delay_seconds", -1),
+        ("observation_retries", -1),
+        ("observation_retry_delay", -1),
+        ("visual_change_threshold", 1.1),
+        ("image_compare_size", 8),
+        ("crop_top_ratio", 0.5),
+        ("crop_bottom_ratio", -0.1),
+    ],
+)
+def test_verification_config_rejects_unsafe_ranges(field: str, value: float) -> None:
+    with pytest.raises(ValueError):
+        VerificationConfig(**{field: value})
+
+
+def test_verification_config_rejects_combined_overcropping() -> None:
+    with pytest.raises(ValueError, match="too little image content"):
+        VerificationConfig(crop_top_ratio=0.4, crop_bottom_ratio=0.4)
+
+
+def test_failed_command_short_circuits_visual_verification() -> None:
+    result = ActionVerifier().verify(
+        action=do(action="Tap", element=[500, 500]),
+        execution=ActionResult(
+            False,
+            False,
+            message="ADB disconnected",
+            error_code="action_execution_failed",
+            metadata={"exception_type": "ConnectionError"},
+        ),
+        before=make_observation(10),
+        after=make_observation(80),
+    )
+
+    assert result.status is VerificationStatus.FAILED
+    assert result.policy == "command_success"
+    assert result.error_code == "action_execution_failed"
+    assert result.metadata["execution_metadata"]["exception_type"] == "ConnectionError"
+
+
+def test_finish_and_command_only_actions_have_explicit_semantics() -> None:
+    verifier = ActionVerifier()
+    finished = verifier.verify(
+        action=finish("done"),
+        execution=ActionResult(True, True, "done"),
+        before=make_observation(10),
+        after=None,
+    )
+    note = verifier.verify(
+        action=do(action="Note", message="remember"),
+        execution=ActionResult(True, False),
+        before=make_observation(10),
+        after=None,
+    )
+
+    assert finished.status is VerificationStatus.SKIPPED
+    assert finished.policy == "finish_action"
+    assert note.status is VerificationStatus.PASSED
+    assert note.semantic_effect_verified is True
+
+
+def test_missing_post_action_observation_is_structured_failure() -> None:
+    result = ActionVerifier().verify(
+        action=do(action="Back"),
+        execution=ActionResult(True, False),
+        before=make_observation(10),
+        after=None,
+    )
+
+    assert result.error_code == "verification_observation_failed"
+    assert result.command_success is True
+
+
+def test_home_and_unknown_actions_use_distinct_policies() -> None:
+    verifier = ActionVerifier()
+    before = make_observation(10, app="Example")
+    home = verifier.verify(
+        action=do(action="Home"),
+        execution=ActionResult(True, False),
+        before=before,
+        after=make_observation(80, app="System Home"),
+    )
+    missed_home = verifier.verify(
+        action=do(action="Home"),
+        execution=ActionResult(True, False),
+        before=before,
+        after=make_observation(80, app="Settings"),
+    )
+    unknown = verifier.verify(
+        action={"_metadata": "do", "action": "CustomAdapterAction"},
+        execution=ActionResult(True, False),
+        before=before,
+        after=make_observation(80, app="Example"),
+    )
+
+    assert home.status is VerificationStatus.PASSED
+    assert missed_home.error_code == "verification_home_failed"
+    assert unknown.status is VerificationStatus.INCONCLUSIVE
+    assert unknown.error_code == "verification_inconclusive"
 
 
 def test_tap_only_verifies_observable_change() -> None:

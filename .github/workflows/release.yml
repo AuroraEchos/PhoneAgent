@@ -39,6 +39,12 @@ jobs:
       - name: Lint
         run: uv run ruff check .
 
+      - name: Check Web Console modules
+        run: |
+          for file in webui/static/*.js; do
+            node --input-type=module --check < "$file"
+          done
+
       - name: Test
         run: uv run pytest -q
 

@@ -166,6 +166,22 @@ the event stream is authoritative for execution history.
 Trajectories may contain task text, model output, app or package names, timestamps, and action
 parameters. Redact them before publication.
 
+## Evaluation reports
+
+An accepted `finish(success=True)` does not prove semantic correctness on the real device. After
+external human or deterministic judgment, summarize trajectories with:
+
+```bash
+uv run phoneagent-eval runs \
+  --annotations evaluation/annotations.json \
+  --output evaluation/report.json
+```
+
+The report keeps runtime-reported and externally judged success rates separate and aggregates
+steps, recoveries, error codes, model time, and Token usage. See
+[`docs/EVALUATION.md`](docs/EVALUATION.md) for the evaluation and annotation contract, and
+[`docs/REAL_DEVICE_REGRESSION.md`](docs/REAL_DEVICE_REGRESSION.md) for the release smoke matrix.
+
 ## Development
 
 ```bash
