@@ -5,8 +5,10 @@ import subprocess
 import sys
 from argparse import Namespace
 from pathlib import Path
+from types import SimpleNamespace
 
 from phoneagent import cli
+from phoneagent.model import ModelConfig
 
 
 def test_env_example_uses_current_lazy_launch_configuration() -> None:
@@ -69,3 +71,47 @@ def test_successful_device_command_stops_cli_dispatch(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_build_cli_config", unexpected_config_build)
 
     assert cli.main() == 0
+
+
+def test_model_preflight_accepts_reasoning_only_short_probe(monkeypatch, capsys) -> None:
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content=None, reasoning_content="thinking"),
+                finish_reason="length",
+            )
+        ]
+    )
+    completions = SimpleNamespace(create=lambda **kwargs: response)
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    import openai
+
+    monkeypatch.setattr(openai, "DefaultHttpxClient", lambda **kwargs: object())
+    monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: fake_client)
+
+    assert cli.check_model_api(ModelConfig()) is True
+    output = capsys.readouterr().out
+    assert "reasoning without final content" in output
+    assert "[OK] API responded successfully" in output
+
+
+def test_model_preflight_rejects_a_truly_empty_choice(monkeypatch, capsys) -> None:
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content=None, reasoning_content=None),
+                finish_reason="stop",
+            )
+        ]
+    )
+    completions = SimpleNamespace(create=lambda **kwargs: response)
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    import openai
+
+    monkeypatch.setattr(openai, "DefaultHttpxClient", lambda **kwargs: object())
+    monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: fake_client)
+
+    assert cli.check_model_api(ModelConfig()) is False
+    assert "API returned empty response" in capsys.readouterr().out

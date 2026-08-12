@@ -626,10 +626,20 @@ def _check_model_api(config: ModelConfig) -> bool:
             print("  [FAILED] API returned no choices")
             return False
 
-        content = getattr(response.choices[0].message, "content", "")
-        if not content or not content.strip():
+        choice = response.choices[0]
+        content = getattr(choice.message, "content", "")
+        reasoning = getattr(choice.message, "reasoning_content", "")
+        content_present = bool(content and str(content).strip())
+        reasoning_present = bool(reasoning and str(reasoning).strip())
+        if not content_present and not reasoning_present:
             print("  [FAILED] API returned empty response")
             return False
+
+        if not content_present:
+            print(
+                "  [WARN] Short probe returned reasoning without final content "
+                f"(finish_reason={choice.finish_reason or 'unknown'})"
+            )
 
         print("  [OK] API responded successfully")
         print("=" * 64 + "\n")

@@ -60,6 +60,40 @@ def test_wait_action_is_cancelled_without_waiting_for_full_duration() -> None:
     assert results[0].error_code == "user_cancelled"
 
 
+def test_type_keeps_test_keyboard_for_task_then_restores_original_input_method() -> None:
+    class Device:
+        def __init__(self) -> None:
+            self.prepared = 0
+            self.typed: list[str] = []
+            self.restored: list[str] = []
+
+        def detect_and_set_adb_keyboard(self) -> str:
+            self.prepared += 1
+            return "original/.Ime"
+
+        def type_text(self, value: str) -> None:
+            self.typed.append(value)
+
+        def restore_keyboard(self, ime: str) -> None:
+            self.restored.append(ime)
+
+    device = Device()
+    handler = ActionHandler(device)  # type: ignore[arg-type]
+
+    first = handler.execute(do(action="Type", text="first"), 1080, 2400)
+    second = handler.execute(do(action="Type", text="second"), 1080, 2400)
+
+    assert first.success is True
+    assert second.success is True
+    assert device.prepared == 1
+    assert device.typed == ["first", "second"]
+    assert device.restored == []
+    assert handler.restore_input_method() is None
+    assert device.restored == ["original/.Ime"]
+    assert handler.restore_input_method() is None
+    assert device.restored == ["original/.Ime"]
+
+
 @pytest.mark.parametrize(
     ("action", "expected_fragment"),
     [

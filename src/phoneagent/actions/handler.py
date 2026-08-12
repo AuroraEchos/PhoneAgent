@@ -61,9 +61,23 @@ class ActionHandler:
         self.max_gesture_duration_ms = max(1, int(max_gesture_duration_ms))
         self.task = ""
         self.notes: list[str] = []
+        self._original_input_method: str | None = None
 
     def set_task(self, task: str) -> None:
         self.task = str(task or "")
+
+    def restore_input_method(self) -> str | None:
+        """Restore the keyboard captured by the first Type action in this task."""
+        original = self._original_input_method
+        self._original_input_method = None
+        restore = getattr(self.device, "restore_keyboard", None)
+        if original is None or not callable(restore):
+            return None
+        try:
+            restore(original)
+        except Exception as exc:
+            return f"{type(exc).__name__}: {exc}"
+        return None
 
     def execute(
         self, action: dict[str, Any], screen_width: int, screen_height: int
@@ -247,6 +261,9 @@ class ActionHandler:
         )
 
     def _handle_type(self, action: dict[str, Any], width: int, height: int) -> ActionResult:
+        prepare_keyboard = getattr(self.device, "detect_and_set_adb_keyboard", None)
+        if self._original_input_method is None and callable(prepare_keyboard):
+            self._original_input_method = str(prepare_keyboard() or "")
         if action.get("clear") is True:
             self.device.clear_text()
         self.device.type_text(str(action.get("text", "")))

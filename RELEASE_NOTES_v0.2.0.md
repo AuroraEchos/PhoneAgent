@@ -22,6 +22,8 @@ real-device evaluation, regression testing, and maintenance mode.
   coordinate action is not blindly replayed.
 - Fixed retry exhaustion so typed screenshot decode, permission, and capture errors reach the
   Agent recovery policy instead of becoming an unrelated bare-reraise runtime error.
+- Made short model probes compatible with reasoning-first providers and restored the original
+  Android input method after task-level text entry.
 
 ## Model and cancellation behavior
 

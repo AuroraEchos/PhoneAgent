@@ -1425,6 +1425,18 @@ class PhoneAgent:
     def _finalize_run(self, result: StepResult) -> None:
         if self.state.finished:
             return
+        keyboard_restore_error = self.action_handler.restore_input_method()
+        if keyboard_restore_error:
+            logger.warning("Failed to restore input method: %s", keyboard_restore_error)
+            self._record_event(
+                EventType.ERROR,
+                "Failed to restore the input method after task execution",
+                {
+                    "error_code": "keyboard_restore_failed",
+                    "error": keyboard_restore_error,
+                },
+                step=self._step_count,
+            )
         transition = (
             self.state.cancel(message=result.message)
             if result.error_code in {"cancelled", "interrupted"}

@@ -34,6 +34,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Preserved typed screenshot decode, permission, and capture failures after retry exhaustion
   instead of replacing them with a bare-reraise runtime error.
+- Accepted reasoning-only responses from deliberately short model preflight probes, and restored
+  the user's original input method after a task that used ADB Keyboard.
 
 ### Compatibility
 
