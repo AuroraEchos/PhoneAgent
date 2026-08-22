@@ -16,15 +16,19 @@
   <meta property="og:url" content="https://auroraechos.github.io/PhoneAgent/">
   <meta property="og:title" content="PhoneAgent — Vision-Driven Android Agent Runtime">
   <meta property="og:description" content="Observe, plan, execute, verify, and recover on real Android devices.">
-  <meta property="og:image" content="assets/og-image.png">
+  <meta property="og:image" content="https://auroraechos.github.io/PhoneAgent/assets/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="PhoneAgent vision-driven Android agent runtime">
   <meta property="og:site_name" content="PhoneAgent">
   <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://auroraechos.github.io/PhoneAgent/assets/og-image.png">
 
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="preload" href="assets/logo.svg" as="image" type="image/svg+xml">
   <script>document.documentElement.classList.add("js");</script>
   <link rel="stylesheet" href="style.css">
-  <script src="script.js" defer></script>
+  <script src="script.js?v=20260822" defer></script>
 </head>
 <body>
   <div class="scroll-progress" aria-hidden="true"><span data-scroll-progress></span></div>
@@ -39,7 +43,7 @@
         <img src="assets/logo.svg" alt="" width="34" height="34">
         <span>PhoneAgent</span>
       </a>
-      <span class="header-release" aria-label="Current release">v0.2.0</span>
+      <span class="header-release" aria-label="Current release">v0.2.1</span>
 
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" data-nav-toggle>
         <span class="sr-only">Open navigation</span>
@@ -49,6 +53,7 @@
       <nav class="site-nav" id="site-nav" aria-label="Primary navigation" data-nav>
         <a href="#features" data-nav-link data-i18n="nav.features">Features</a>
         <a href="#architecture" data-nav-link data-i18n="nav.architecture">Architecture</a>
+        <a href="#docs" data-nav-link data-i18n="nav.docs">Source Guide</a>
         <a href="#quickstart" data-nav-link data-i18n="nav.quickstart">Quick Start</a>
         <a href="#roadmap" data-nav-link data-i18n="nav.roadmap">Roadmap</a>
         <a href="#limitations" data-nav-link data-i18n="nav.limitations">Limitations</a>
@@ -72,7 +77,7 @@
         <div class="hero-copy reveal">
           <div class="eyebrow">
             <span class="status-dot" aria-hidden="true"></span>
-            <span data-i18n="hero.eyebrow">Open source · v0.2.0 Research Release</span>
+            <span data-i18n="hero.eyebrow">Open source · v0.2.1 Research Release</span>
           </div>
 
           <h1>
@@ -325,7 +330,7 @@
 
             <div class="flow-node flow-node-planner">
               <span class="flow-icon flow-icon-planner">V</span>
-              <div><b>Plan + Parse</b><small>Every task · one validated VLM action</small></div>
+              <div><b>Plan + Parse</b><small>Visual branch · one validated action</small></div>
             </div>
 
             <div class="flow-link" aria-hidden="true"></div>
@@ -360,6 +365,76 @@
       </div>
     </section>
 
+    <section class="section section-soft" id="docs">
+      <div class="container source-guide-grid">
+        <div class="source-guide-copy reveal">
+          <span class="section-kicker" data-i18n="docs.kicker">Technical documentation</span>
+          <h2 data-i18n="docs.title">Read the runtime from its source boundaries.</h2>
+          <p data-i18n="docs.description">Eleven Chinese code-guided documents connect entry, observation, planning, actions, safety, verification, recovery, evidence, and the Web Console into one traceable execution path.</p>
+
+          <div class="source-guide-meta" aria-label="Source guide metadata">
+            <div><strong>11</strong><span data-i18n="docs.meta.documents">Subsystem documents</span></div>
+            <div><strong>3,600+</strong><span data-i18n="docs.meta.lines">Lines of guidance</span></div>
+            <div><strong>1</strong><span data-i18n="docs.meta.path">Connected runtime</span></div>
+          </div>
+
+          <a class="button button-primary source-guide-button" href="guide.html">
+            <span data-i18n="docs.open">Open the source guide (中文)</span>
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </a>
+        </div>
+
+        <div class="source-guide-map">
+          <article class="guide-stage reveal" data-stage="01">
+            <div class="guide-stage-head">
+              <span>01</span>
+              <div><h3 data-i18n="docs.stage.foundation">Runtime foundation</h3><p data-i18n="docs.stage.foundation.desc">Start, observe, and prepare model context.</p></div>
+            </div>
+            <div class="guide-stage-links">
+              <a href="guide.html?doc=entry"><span data-i18n="docs.item.entry">Entry &amp; Configuration</span><small>cli.py · config/</small></a>
+              <a href="guide.html?doc=device"><span data-i18n="docs.item.device">Device &amp; Observation</span><small>devices/ · adb/</small></a>
+              <a href="guide.html?doc=model"><span data-i18n="docs.item.model">Model &amp; Context</span><small>model/ · prompts</small></a>
+            </div>
+          </article>
+
+          <article class="guide-stage reveal reveal-delay-1" data-stage="02">
+            <div class="guide-stage-head">
+              <span>02</span>
+              <div><h3 data-i18n="docs.stage.loop">Core agent loop</h3><p data-i18n="docs.stage.loop.desc">Coordinate state and turn intent into actions.</p></div>
+            </div>
+            <div class="guide-stage-links">
+              <a href="guide.html?doc=agent"><span data-i18n="docs.item.agent">Agent Runtime &amp; State</span><small>agent.py · runtime/state.py</small></a>
+              <a href="guide.html?doc=action"><span data-i18n="docs.item.action">Action Subsystem</span><small>actions/</small></a>
+            </div>
+          </article>
+
+          <article class="guide-stage reveal" data-stage="03">
+            <div class="guide-stage-head">
+              <span>03</span>
+              <div><h3 data-i18n="docs.stage.reliability">Safety &amp; reliability</h3><p data-i18n="docs.stage.reliability.desc">Guard execution before and after device side effects.</p></div>
+            </div>
+            <div class="guide-stage-links">
+              <a href="guide.html?doc=semantic"><span data-i18n="docs.item.semantic">Semantic Review</span><small>runtime/semantic.py</small></a>
+              <a href="guide.html?doc=freshness"><span data-i18n="docs.item.freshness">Freshness Guard</span><small>runtime/freshness.py</small></a>
+              <a href="guide.html?doc=verification"><span data-i18n="docs.item.verification">Verification</span><small>runtime/verification.py</small></a>
+              <a href="guide.html?doc=recovery"><span data-i18n="docs.item.recovery">Recovery</span><small>runtime/recovery.py</small></a>
+            </div>
+          </article>
+
+          <article class="guide-stage reveal reveal-delay-1" data-stage="04">
+            <div class="guide-stage-head">
+              <span>04</span>
+              <div><h3 data-i18n="docs.stage.evidence">Evidence &amp; interface</h3><p data-i18n="docs.stage.evidence.desc">Persist what happened and expose it to people.</p></div>
+            </div>
+            <div class="guide-stage-links">
+              <a href="guide.html?doc=observability"><span data-i18n="docs.item.observability">Observability &amp; Evaluation</span><small>events · trajectory · evaluation</small></a>
+              <a href="guide.html?doc=web"><span data-i18n="docs.item.web">Local Web Console</span><small>webui/</small></a>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
     <section class="section section-soft" id="quickstart">
       <div class="container">
         <div class="section-heading reveal">
@@ -372,7 +447,7 @@
           <div class="setup-steps reveal">
             <article><span>01</span><div><h3 data-i18n="quickstart.step1.title">Prepare the environment</h3><p data-i18n="quickstart.step1.description">Python 3.12+, uv, Android Platform Tools, and a USB-debuggable device. Install ADB Keyboard before tasks that use Type.</p></div></article>
             <article><span>02</span><div><h3 data-i18n="quickstart.step2.title">Configure the model</h3><p data-i18n="quickstart.step2.description">Use a vision-language model service compatible with the OpenAI Chat Completions API.</p></div></article>
-            <article><span>03</span><div><h3 data-i18n="quickstart.step3.title">Run a task</h3><p data-i18n="quickstart.step3.description">Run a multi-step WeChat and Meituan task. The planner is instructed to mark order submission as sensitive so the runtime requests confirmation.</p></div></article>
+            <article><span>03</span><div><h3 data-i18n="quickstart.step3.title">Run a task</h3><p data-i18n="quickstart.step3.description">Run a multi-step WeChat and Meituan task. The runtime classifies the order task from the original instruction, reviews coordinate actions, and requests confirmation when needed.</p></div></article>
           </div>
 
           <div class="terminal-card reveal reveal-delay-1" data-spotlight>
@@ -460,7 +535,7 @@
             <li data-i18n="trajectory.item2">Measure latency, actions, and recovery behavior; capture tokens when the provider reports usage.</li>
             <li data-i18n="trajectory.item3">Use saved trajectories as input for evaluation and future experience-learning work.</li>
           </ul>
-          <a class="text-link" data-link="release" href="#" target="_blank" rel="noreferrer"><span data-i18n="trajectory.release">Read the v0.2.0 release notes</span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+          <a class="text-link" data-link="release" href="#" target="_blank" rel="noreferrer"><span data-i18n="trajectory.release">Read the v0.2.1 release notes</span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
         </div>
       </div>
     </section>
@@ -470,22 +545,22 @@
         <div class="section-heading reveal">
           <span class="section-kicker" data-i18n="roadmap.kicker">Roadmap</span>
           <h2 data-i18n="roadmap.title">The runtime is small by design. The direction is not.</h2>
-          <p data-i18n="roadmap.description">v0.2.0 freezes the final architecture baseline. The project now moves into real-device evaluation, regression, and maintenance.</p>
+          <p data-i18n="roadmap.description">v0.2.1 closes semantic review and Web hardening on the refactor baseline; the next phase freezes the real-device evaluation baseline.</p>
         </div>
 
         <div class="roadmap-board reveal reveal-delay-1">
           <div class="roadmap-column complete" data-spotlight>
-            <div class="roadmap-column-head"><span></span><div><b data-i18n="roadmap.complete">Released</b><small>v0.2.0</small></div></div>
+            <div class="roadmap-column-head"><span></span><div><b data-i18n="roadmap.complete">Current release</b><small>v0.2.1</small></div></div>
             <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item1.title">Vision agent loop</b><small data-i18n="roadmap.item1.description">One live AgentState and one auditable AgentEvent stream.</small></p></div>
             <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item2.title">Lazy Android app launch</b><small data-i18n="roadmap.item2.description">Static aliases, installation checks, package launch, foreground verification.</small></p></div>
             <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item3.title">Safe action runtime</b><small data-i18n="roadmap.item3.description">Strict protocol, confirmation, minimal bounded recovery.</small></p></div>
             <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.web.title">Local Web Console</b><small data-i18n="roadmap.web.description">Session checks, live events, prompts, and trajectory inspection.</small></p></div>
-            <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item5.title">Evaluation harness</b><small data-i18n="roadmap.item5.description">Externally annotated trajectory metrics and recorded real-device regression.</small></p></div>
+            <div class="roadmap-card"><span>✓</span><p><b data-i18n="roadmap.item4.title">Isolated semantic review</b><small data-i18n="roadmap.item4.description">Fresh completion review plus coordinate-action review for high-consequence tasks and explicit boundaries.</small></p></div>
           </div>
 
           <div class="roadmap-column next" data-spotlight>
             <div class="roadmap-column-head"><span></span><div><b data-i18n="roadmap.next">Next</b><small>Evaluation</small></div></div>
-            <div class="roadmap-card"><span>→</span><p><b data-i18n="roadmap.item4.title">Broader semantic verification</b><small data-i18n="roadmap.item4.description">Subgoal-aware evidence and independent review beyond deterministic system checks.</small></p></div>
+            <div class="roadmap-card"><span>→</span><p><b data-i18n="roadmap.item5.title">Frozen evaluation baseline</b><small data-i18n="roadmap.item5.description">Versioned tasks, initial states, device/model matrix, repetitions, external labels, and cost reporting.</small></p></div>
             <div class="roadmap-card"><span>→</span><p><b data-i18n="roadmap.item6.title">Provider abstraction</b><small data-i18n="roadmap.item6.description">More local and hosted VLM backends.</small></p></div>
           </div>
 
@@ -503,13 +578,13 @@
       <div class="container limitations-grid">
         <div class="limitations-heading reveal">
           <span class="section-kicker" data-i18n="limitations.kicker">Current boundaries</span>
-          <h2 data-i18n="limitations.title">Honest about what v0.2.0 can prove.</h2>
+          <h2 data-i18n="limitations.title">Honest about what current main can prove.</h2>
           <p data-i18n="limitations.description">PhoneAgent is an Alpha research and engineering runtime. It exposes uncertainty instead of converting weak evidence into confident claims.</p>
         </div>
 
         <div class="limitations-list">
           <article class="reveal"><span>01</span><div><h3 data-i18n="limitations.item1.title">Visual change is not semantic correctness</h3><p data-i18n="limitations.item1.description">For coordinate actions, a changed screen does not prove that the intended UI target was selected.</p></div></article>
-          <article class="reveal reveal-delay-1"><span>02</span><div><h3 data-i18n="limitations.item2.title">Task completion is model-reported</h3><p data-i18n="limitations.item2.description">The planner reports runtime completion through finish(...); published task correctness still requires an external annotation or deterministic judge.</p></div></article>
+          <article class="reveal reveal-delay-1"><span>02</span><div><h3 data-i18n="limitations.item2.title">Completion review is not benchmark truth</h3><p data-i18n="limitations.item2.description">A fresh isolated model review gates planner completion, but published task correctness still requires an external annotation or deterministic judge.</p></div></article>
           <article class="reveal reveal-delay-2"><span>03</span><div><h3 data-i18n="limitations.item3.title">Protected screens may require takeover</h3><p data-i18n="limitations.item3.description">The runtime does not guess on blank or protected screens; it requests takeover when enabled or stops the run.</p></div></article>
           <article class="reveal"><span>04</span><div><h3 data-i18n="limitations.item4.title">ADB is the current deployment boundary</h3><p data-i18n="limitations.item4.description">A true on-device product requires an Android application, services, permissions, and privacy controls.</p></div></article>
         </div>
@@ -540,8 +615,8 @@
         <p data-i18n="footer.description">Vision-driven Android agent runtime.</p>
       </div>
       <div class="footer-links">
-        <div><b data-i18n="footer.project">Project</b><a data-link="github" href="#" target="_blank" rel="noreferrer">GitHub</a><a data-link="release" href="#" target="_blank" rel="noreferrer">Release v0.2.0</a><a data-link="issues" href="#" target="_blank" rel="noreferrer">Issues</a></div>
-        <div><b data-i18n="footer.resources">Resources</b><a href="ARCHITECTURE.md" target="_blank" rel="noreferrer">Architecture</a><a data-link="readme" href="#" target="_blank" rel="noreferrer">README</a><a data-link="license" href="#" target="_blank" rel="noreferrer">Apache-2.0</a></div>
+        <div><b data-i18n="footer.project">Project</b><a data-link="github" href="#" target="_blank" rel="noreferrer">GitHub</a><a data-link="release" href="#" target="_blank" rel="noreferrer">Release v0.2.1</a><a data-link="issues" href="#" target="_blank" rel="noreferrer">Issues</a></div>
+        <div><b data-i18n="footer.resources">Resources</b><a href="guide.html" data-i18n="footer.sourceGuide">Source Guide</a><a href="ARCHITECTURE.md" target="_blank" rel="noreferrer">Architecture</a><a data-link="readme" href="#" target="_blank" rel="noreferrer">README</a><a data-link="license" href="#" target="_blank" rel="noreferrer">Apache-2.0</a></div>
       </div>
     </div>
     <div class="container footer-bottom">

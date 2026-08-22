@@ -34,6 +34,12 @@ Observe → Plan → Execute → Verify → Recover → Repeat
   action-only 重试，不触碰设备，也不计作恢复。
 - 明确入口应用的任务会在首次观察后优先确定性启动；其他 `Launch` 仍按需解析别名、检查安装状态并验证前台包名。
 - 支持动作执行后的状态验证。
+- 规划模型提出 `finish(success=True)` 后会重新观察设备，并在不共享规划历史的隔离上下文中
+  进行一次完整任务语义复核；失败或无法判断时不会结束任务，而是携带证据重新规划。
+- 敏感策略同时检查用户原始任务和模型动作。资金/商业、凭证/账户安全任务，以及含有
+  “不要发送/停留在提交前”等显式否定边界的任务，其坐标动作都会接受隔离上下文的视觉
+  风险复核；复核要求确认或无法判断时必须人工确认。动作描述若明确指向被禁止效果，则在
+  视觉复核前以零触摸方式直接拒绝；无描述坐标动作也不能绕过否定边界审核。
 - 通知与控制中心使用语义动作：优先执行 `cmd statusbar`，打开无效时由执行层自动使用左上角或右上角下拉手势兜底，并将内部尝试写入轨迹。
 - 中断信号可关闭当前模型流并提前结束 Wait；已发送的原子 ADB 命令完成后不会再执行下一步。
 - 坐标动作在用户确认后、ADB 下发前重新观察屏幕；目标区域或页面结构变化时取消旧动作，
@@ -50,6 +56,8 @@ Observe → Plan → Execute → Verify → Recover → Repeat
 - 动作参数采用封闭 Schema：未知字段、重复关键字和缺失的必需参数均在执行前拒绝。
 - 只有 `Launch`、`Wait`、`Home` 可在无敏感标记时进行一次安全重试。
 - `Tap`、`Type`、`Swipe`、`Back` 等动作不会被自动重放。
+- 任务级语义复核和动作风险复核默认启用，并分别记录 `task_verification` 与 `risk_review`
+  事件；它们可降低规划模型自证成功和漏标风险，但不替代外部任务正确性标注。
 - `Tap`、`Double Tap`、`Long Press` 和 `Swipe` 默认启用执行前截图新鲜度守卫；仅诊断时
   可使用 `--disable-pre-action-freshness` 关闭。
 - 当前状态只保存运行所需的最新值；模型原文、思考、动作、验证和阶段历史以 trajectory
@@ -258,8 +266,9 @@ PhoneAgent 运行时。后续连续提交任务不会重复检查。页面直接
 可以显示实时阶段、模型响应、动作、验证与恢复，处理敏感操作确认和人工接管，并浏览或
 下载 `runs/trajectory_*.json`。
 
-详细说明见 [`webui/README.md`](webui/README.md)。控制接口没有身份认证，建议保持默认的
-`127.0.0.1` 监听地址，不要直接暴露到局域网或公网。
+详细说明见 [`webui/README.md`](webui/README.md)。控制接口没有身份认证，因此运行时默认
+拒绝非回环地址和通配地址；不要绕过这一保护直接暴露到局域网或公网。确需远程访问时，
+必须显式使用非通配地址和 `--allow-remote`，并在前方配置带身份认证的 TLS 反向代理。
 
 ## 应用启动别名
 
@@ -326,13 +335,16 @@ uv run phoneagent-eval runs \
 ```
 
 报告严格区分运行时自报成功率和外部判定的任务成功率，同时汇总步数、恢复、错误码、模型
-耗时与 Token。评测流程和标注格式见 [`docs/EVALUATION.md`](docs/EVALUATION.md)，发布前的
+耗时、Token、模型请求用途、任务复核与风险复核结论。评测流程和标注格式见
+[`docs/EVALUATION.md`](docs/EVALUATION.md)，发布前的
 真机回归步骤和记录表见 [`docs/REAL_DEVICE_REGRESSION.md`](docs/REAL_DEVICE_REGRESSION.md)。
 v0.2.0 的首轮脱敏真机结果见
 [`docs/REAL_DEVICE_RESULT_v0.2.0.md`](docs/REAL_DEVICE_RESULT_v0.2.0.md)。
 
 如果要系统理解项目设计、准备简历描述和技术面试，可以从
 [`docs/INTERVIEW_GUIDE.md`](docs/INTERVIEW_GUIDE.md) 开始。
+如果希望按照实际源码调用链逐个学习各子系统，请从
+[`docs/subsystems/README.md`](docs/subsystems/README.md) 开始。
 
 ## 开发
 
@@ -352,6 +364,8 @@ PhoneAgent 当前仍然是研究原型：
 - 人类可读的 `Launch` 名称受内置静态别名表限制；未收录应用需要准确 package 或普通
   视觉 GUI 路径。
 - 坐标点击的语义正确性仍依赖视觉模型。
+- 隔离的任务完成复核仍是模型判断，不是外部独立真值；正式评测必须继续使用人工或确定性
+  `task_success` 标注。
 - 尚未完成 Android 原生端侧部署。
 
 ## License

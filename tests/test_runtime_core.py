@@ -58,6 +58,8 @@ class _ProtocolThenFinishModel:
         self.finish_reason = finish_reason
 
     def request(self, messages, *, print_stream=True):  # noqa: ANN001
+        if "独立的 Android 任务完成复核器" in str(messages[0].get("content", "")):
+            return _FinishModel().request(messages, print_stream=print_stream)
         self.calls += 1
         self.messages.append(copy.deepcopy(messages))
         if self.calls == 1:
@@ -74,7 +76,9 @@ class _InvalidArgumentsThenFinishModel:
         self.calls = 0
 
     def request(self, messages, *, print_stream=True):  # noqa: ANN001
-        del messages, print_stream
+        if "独立的 Android 任务完成复核器" in str(messages[0].get("content", "")):
+            return _FinishModel().request(messages, print_stream=print_stream)
+        del print_stream
         self.calls += 1
         if self.calls == 1:
             raw = 'do(action="Back", unexpected="value")'
@@ -206,6 +210,13 @@ class RuntimeCoreTests(unittest.TestCase):
                 "model_response",
                 "metrics",
                 "action",
+                "phase_change",
+                "phase_change",
+                "observation",
+                "model_request",
+                "model_response",
+                "metrics",
+                "task_verification",
                 "phase_change",
                 "execution",
                 "phase_change",

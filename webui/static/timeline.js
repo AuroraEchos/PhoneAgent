@@ -7,8 +7,10 @@ const eventLabels = {
   model_request: "请求模型规划",
   model_response: "模型完成规划",
   action: "生成操作",
+  risk_review: "复核动作风险",
   execution: "执行操作",
   verification: "验证操作结果",
+  task_verification: "复核任务完成情况",
   recovery: "调整执行策略",
   finish: "任务结束",
   error: "发生错误",
@@ -36,7 +38,7 @@ function formatTime(timestamp) {
 function eventKind(type) {
   if (["error", "web_task_error"].includes(type)) return "error";
   if (["recovery"].includes(type)) return "recovery";
-  if (["verification"].includes(type)) return "verification";
+  if (["verification", "task_verification", "risk_review"].includes(type)) return "verification";
   if (["action", "execution"].includes(type)) return "action";
   if (["finish", "web_task_finished"].includes(type)) return "finish";
   return "neutral";
@@ -61,6 +63,10 @@ function summarizeEvent(event) {
     return truncate(payload.thinking || payload.raw_content || event.message, 220);
   }
   if (event.type === "verification") return payload.message || event.message;
+  if (["task_verification", "risk_review"].includes(event.type)) {
+    const verdict = payload.verdict ? `${String(payload.verdict).toUpperCase()} · ` : "";
+    return `${verdict}${payload.message || event.message}`;
+  }
   if (event.type === "recovery") {
     return payload.reason || payload.message || payload.decision?.reason || event.message;
   }
@@ -77,7 +83,8 @@ export function timelineEvents(events) {
 
 export function processEvents(events) {
   const visible = new Set([
-    "observation", "model_response", "action", "execution", "verification", "recovery", "error",
+    "observation", "model_response", "action", "risk_review", "execution", "verification",
+    "task_verification", "recovery", "error",
   ]);
   return events.filter((event) => visible.has(event.type));
 }
@@ -88,7 +95,9 @@ export function latestProcessText(events, task) {
   if (["success", "failed", "cancelled"].includes(task?.status)) {
     return task.result || task.error || "执行过程已经结束。";
   }
-  const modelResponse = [...events].reverse().find((event) => event.type === "model_response");
+  const modelResponse = [...events].reverse().find((event) => (
+    event.type === "model_response" && (event.payload?.purpose || "planning") === "planning"
+  ));
   const modelContent = modelResponse?.payload?.raw_content
     || modelResponse?.payload?.thinking
     || modelResponse?.message;
@@ -112,7 +121,10 @@ export function renderTimeline(events, target, { live = false, waitingText = nul
     body.className = "timeline-body";
     const head = document.createElement("div");
     const title = document.createElement("strong");
-    title.textContent = eventLabels[event.type] || event.type;
+    title.textContent = event.type === "model_response"
+      && (event.payload?.purpose || "planning") !== "planning"
+      ? "模型完成复核"
+      : eventLabels[event.type] || event.type;
     const meta = document.createElement("span");
     const step = Number.isInteger(event.step) ? event.step : event.payload?.step;
     meta.textContent = `${Number.isInteger(step) ? `第 ${step} 步 · ` : ""}${formatTime(event.timestamp)}`;

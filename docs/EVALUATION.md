@@ -66,6 +66,7 @@ The report includes:
 - duration and step counts;
 - model requests, model latency, and provider-reported token usage;
 - action and recovery counts;
+- planning/completion/risk-review request counts and review verdict frequencies;
 - structured error-code frequencies;
 - one auditable summary per trajectory.
 

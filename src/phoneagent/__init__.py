@@ -18,6 +18,7 @@ __all__ = [
     "FreshnessConfig",
     "PhoneAgent",
     "RecoveryConfig",
+    "SemanticReviewConfig",
     "StepResult",
     "VerificationConfig",
 ]
@@ -33,11 +34,18 @@ def __getattr__(name: str) -> Any:
             "PhoneAgent": PhoneAgent,
             "StepResult": StepResult,
         }[name]
-    if name in {"AgentPhase", "FreshnessConfig", "RecoveryConfig", "VerificationConfig"}:
+    if name in {
+        "AgentPhase",
+        "FreshnessConfig",
+        "RecoveryConfig",
+        "SemanticReviewConfig",
+        "VerificationConfig",
+    }:
         from phoneagent.runtime import (
             AgentPhase,
             FreshnessConfig,
             RecoveryConfig,
+            SemanticReviewConfig,
             VerificationConfig,
         )
 
@@ -45,6 +53,7 @@ def __getattr__(name: str) -> Any:
             "AgentPhase": AgentPhase,
             "FreshnessConfig": FreshnessConfig,
             "RecoveryConfig": RecoveryConfig,
+            "SemanticReviewConfig": SemanticReviewConfig,
             "VerificationConfig": VerificationConfig,
         }[name]
     raise AttributeError(f"module 'phoneagent' has no attribute {name!r}")

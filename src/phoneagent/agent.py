@@ -21,6 +21,12 @@ from phoneagent.actions import (
     finish,
     parse_action,
 )
+from phoneagent.actions.policy import (
+    action_needs_task_risk_review,
+    task_has_negative_boundary,
+    task_risk_reasons,
+    task_scope_violation_message,
+)
 from phoneagent.config import TaskEntryApp, get_messages, get_system_prompt, infer_task_entry_app
 from phoneagent.config.apps import get_package_name
 from phoneagent.devices import AndroidDevice, ScreenObservation
@@ -51,10 +57,18 @@ from phoneagent.runtime import (
     RecoveryManager,
     RecoveryOutcome,
     RecoveryStrategy,
+    ReviewVerdict,
+    SemanticReviewConfig,
+    SemanticReviewResult,
     TrajectoryRecorder,
     VerificationConfig,
     VerificationResult,
     VerificationStatus,
+    build_action_risk_review_context,
+    build_completion_review_context,
+    compact_runtime_evidence,
+    parse_action_risk_review,
+    parse_completion_review,
 )
 
 logger = logging.getLogger(__name__)
@@ -110,6 +124,7 @@ class AgentConfig:
     freshness: FreshnessConfig = field(default_factory=FreshnessConfig)
     verification: VerificationConfig = field(default_factory=VerificationConfig)
     recovery: RecoveryConfig = field(default_factory=RecoveryConfig)
+    semantic_review: SemanticReviewConfig = field(default_factory=SemanticReviewConfig)
 
     def __post_init__(self) -> None:
         if self.system_prompt is None:
@@ -527,6 +542,7 @@ class PhoneAgent:
                     "phase": self.state.phase.value,
                     "protocol_attempt": protocol_attempt,
                     "protocol_retry": is_protocol_retry,
+                    "purpose": "planning",
                 },
             )
             response: ModelResponse | None = None
@@ -683,6 +699,7 @@ class PhoneAgent:
         response: ModelResponse,
         *,
         protocol_attempt: int = 1,
+        purpose: str = "planning",
     ) -> None:
         metrics = self._model_response_metrics(response)
         self._record_event(
@@ -695,6 +712,7 @@ class PhoneAgent:
                 "metrics": metrics,
                 "protocol_attempt": protocol_attempt,
                 "protocol_retries_used": protocol_attempt - 1,
+                "purpose": purpose,
                 "step": self._step_count,
             },
         )
@@ -705,6 +723,7 @@ class PhoneAgent:
                 "metrics": metrics,
                 "protocol_attempt": protocol_attempt,
                 "protocol_rejected": False,
+                "purpose": purpose,
                 "step": self._step_count,
             },
         )
@@ -790,12 +809,81 @@ class PhoneAgent:
         if self._cancel_event.is_set():
             return self._cancelled_result()
 
+        completion_review: SemanticReviewResult | None = None
+        if action.get("_metadata") == "finish" and action.get("success") is True:
+            reviewed_completion = await self._review_task_completion_async(
+                accepted,
+                planned=observation,
+            )
+            if isinstance(reviewed_completion, StepResult):
+                return reviewed_completion
+            completion_review = reviewed_completion
+
+        scope_violation = task_scope_violation_message(action, self.state.goal)
+        if scope_violation:
+            blocked = SemanticReviewResult(
+                verdict=ReviewVerdict.BLOCK,
+                message=scope_violation,
+                purpose="action_risk",
+                error_code="task_scope_violation",
+                metadata={"source": "deterministic_task_boundary"},
+            )
+            self._record_event(
+                EventType.RISK_REVIEW,
+                blocked.message,
+                {**blocked.to_dict(), "action": action, "step": self._step_count},
+            )
+            return await self._handle_runtime_failure_async(
+                message=scope_violation,
+                error_code="task_scope_violation",
+                thinking=accepted.response.thinking,
+                raw_model_output=accepted.response.raw_content,
+                action=action,
+                metadata={"risk_review": blocked.to_dict(), "command_dispatched": False},
+            )
+
+        risk_review: SemanticReviewResult | None = None
+        forced_confirmation_message: str | None = None
+        task_risk_checked = False
+        if action_needs_task_risk_review(action, self.state.goal):
+            risk_review = await self._review_action_risk_async(accepted, observation)
+            if isinstance(risk_review, StepResult):
+                return risk_review
+            if risk_review.verdict is ReviewVerdict.BLOCK:
+                return await self._handle_runtime_failure_async(
+                    message=f"Action blocked by task-aware risk review: {risk_review.message}",
+                    error_code="task_scope_violation",
+                    thinking=accepted.response.thinking,
+                    raw_model_output=accepted.response.raw_content,
+                    action=action,
+                    metadata={
+                        "risk_review": risk_review.to_dict(),
+                        "command_dispatched": False,
+                    },
+                )
+            task_risk_checked = risk_review.verdict in {
+                ReviewVerdict.ALLOW,
+                ReviewVerdict.CONFIRM,
+                ReviewVerdict.INCONCLUSIVE,
+                ReviewVerdict.SKIPPED,
+            }
+            if risk_review.verdict in {
+                ReviewVerdict.CONFIRM,
+                ReviewVerdict.INCONCLUSIVE,
+                ReviewVerdict.SKIPPED,
+            }:
+                forced_confirmation_message = (
+                    "Task-aware action confirmation required: " + risk_review.message
+                )
+
         execution_observation = observation
         confirmation_checked = False
         if self.freshness_guard.requires_check(action):
             confirmation = await asyncio.to_thread(
                 self.action_handler.request_confirmation,
                 action,
+                message_override=forced_confirmation_message,
+                task_risk_checked=task_risk_checked,
             )
             confirmation_checked = True
             if confirmation is not None:
@@ -814,7 +902,12 @@ class PhoneAgent:
             action,
             execution_observation,
             confirmation_checked=confirmation_checked,
+            task_risk_checked=task_risk_checked,
         )
+        if completion_review is not None:
+            execution.metadata["task_verification"] = completion_review.to_dict()
+        if risk_review is not None:
+            execution.metadata["risk_review"] = risk_review.to_dict()
         self._record_command_execution(action, execution)
 
         if self._cancel_event.is_set():
@@ -825,6 +918,261 @@ class PhoneAgent:
             accepted,
             execution,
             execution_observation,
+        )
+
+    async def _review_task_completion_async(
+        self,
+        accepted: _AcceptedAction,
+        *,
+        planned: ScreenObservation,
+    ) -> SemanticReviewResult | StepResult:
+        """Require fresh, isolated evidence before accepting planner success."""
+        config = self.agent_config.semantic_review
+        if not config.completion_enabled:
+            result = SemanticReviewResult(
+                verdict=ReviewVerdict.SKIPPED,
+                message="Task completion semantic review is disabled",
+                purpose="task_completion",
+                metadata={"command_dispatched": False},
+            )
+            self._record_event(
+                EventType.TASK_VERIFICATION,
+                result.message,
+                {**result.to_dict(), "step": self._step_count},
+            )
+            return result
+
+        self._transition(AgentPhase.VERIFYING, "Independently verify whole-task completion")
+        try:
+            current = await self._observe_with_retries_async()
+            if not current.screenshot.available or current.screenshot.is_blank:
+                raise RuntimeError(
+                    current.screenshot.error or "Completion review screenshot is unavailable"
+                )
+            self._record_observation(current, source="task_completion_verification")
+        except Exception as exc:
+            result = SemanticReviewResult(
+                verdict=ReviewVerdict.INCONCLUSIVE,
+                message=f"Could not obtain trusted completion evidence: {exc}",
+                purpose="task_completion",
+                error_code="task_semantic_verification_inconclusive",
+                metadata={"command_dispatched": False},
+            )
+            self._record_event(
+                EventType.TASK_VERIFICATION,
+                result.message,
+                {**result.to_dict(), "step": self._step_count},
+            )
+            return await self._handle_runtime_failure_async(
+                message=result.message,
+                error_code=result.error_code,
+                thinking=accepted.response.thinking,
+                raw_model_output=accepted.response.raw_content,
+                action=accepted.action,
+                metadata={"task_verification": result.to_dict(), "command_dispatched": False},
+            )
+
+        evidence = compact_runtime_evidence(
+            self.trajectory.events,
+            limit=config.evidence_event_limit,
+        )
+        context = build_completion_review_context(
+            goal=self.state.goal,
+            proposed_message=str(accepted.action.get("message") or ""),
+            observation=current,
+            evidence=evidence,
+        )
+        result = await self._request_semantic_review_async(
+            context=context,
+            purpose="task_completion",
+            max_tokens=config.completion_max_tokens,
+            parser=parse_completion_review,
+        )
+        result.metadata.update(
+            {
+                "current_app": current.current_app,
+                "current_package": current.current_package,
+                "screenshot_sha256": current.screenshot.sha256,
+                "planning_screenshot_sha256": planned.screenshot.sha256,
+                "command_dispatched": False,
+                "isolated_context": True,
+            }
+        )
+        self._record_event(
+            EventType.TASK_VERIFICATION,
+            result.message,
+            {**result.to_dict(), "step": self._step_count},
+        )
+        if result.verdict is ReviewVerdict.PASS:
+            self.recovery_manager.mark_success()
+            self._transition(AgentPhase.EXECUTING, "Task completion evidence accepted")
+            return result
+
+        self._pending_observation = current
+        error_code = (
+            "task_semantic_verification_failed"
+            if result.verdict is ReviewVerdict.FAIL
+            else "task_semantic_verification_inconclusive"
+        )
+        return await self._handle_runtime_failure_async(
+            message=f"Task completion was not verified: {result.message}",
+            error_code=error_code,
+            thinking=accepted.response.thinking,
+            raw_model_output=accepted.response.raw_content,
+            action=accepted.action,
+            metadata={"task_verification": result.to_dict(), "command_dispatched": False},
+        )
+
+    async def _review_action_risk_async(
+        self,
+        accepted: _AcceptedAction,
+        observation: ScreenObservation,
+    ) -> SemanticReviewResult | StepResult:
+        """Review an untrusted coordinate action against the original task scope."""
+        config = self.agent_config.semantic_review
+        if not config.action_risk_enabled:
+            result = SemanticReviewResult(
+                verdict=ReviewVerdict.SKIPPED,
+                message="Visual action-risk review is disabled; fail closed to human confirmation",
+                purpose="action_risk",
+                error_code="action_risk_review_disabled",
+                metadata={"command_dispatched": False},
+            )
+            self._record_event(
+                EventType.RISK_REVIEW,
+                result.message,
+                {**result.to_dict(), "action": accepted.action, "step": self._step_count},
+            )
+            return result
+
+        self._transition(AgentPhase.VERIFYING, "Review action against task risk boundaries")
+        context = build_action_risk_review_context(
+            goal=self.state.goal,
+            action=accepted.action,
+            observation=observation,
+            risk_reasons=task_risk_reasons(self.state.goal),
+            negative_boundary=task_has_negative_boundary(self.state.goal),
+        )
+        result = await self._request_semantic_review_async(
+            context=context,
+            purpose="action_risk",
+            max_tokens=config.action_risk_max_tokens,
+            parser=parse_action_risk_review,
+        )
+        result.metadata.update(
+            {
+                "task_risk_categories": list(task_risk_reasons(self.state.goal)),
+                "explicit_negative_boundary": task_has_negative_boundary(self.state.goal),
+                "screenshot_sha256": observation.screenshot.sha256,
+                "command_dispatched": False,
+                "isolated_context": True,
+            }
+        )
+        self._record_event(
+            EventType.RISK_REVIEW,
+            result.message,
+            {**result.to_dict(), "action": accepted.action, "step": self._step_count},
+        )
+        if self._cancel_event.is_set():
+            return self._cancelled_result(action=accepted.action)
+        if result.verdict is not ReviewVerdict.BLOCK:
+            self._transition(AgentPhase.EXECUTING, "Action risk review complete")
+        return result
+
+    async def _request_semantic_review_async(
+        self,
+        *,
+        context: list[dict[str, Any]],
+        purpose: str,
+        max_tokens: int,
+        parser: Callable[..., SemanticReviewResult],
+    ) -> SemanticReviewResult:
+        """Run one isolated review with bounded protocol-only retries."""
+        config = self.agent_config.semantic_review
+        request_context = context
+        last_error: Exception | None = None
+        for attempt in range(1, config.protocol_retries + 2):
+            self._record_event(
+                EventType.MODEL_REQUEST,
+                f"Requesting isolated {purpose} review",
+                {
+                    "purpose": purpose,
+                    "message_count": len(request_context),
+                    "protocol_attempt": attempt,
+                    "protocol_retry": attempt > 1,
+                    "step": self._step_count,
+                },
+            )
+            response: ModelResponse | None = None
+            try:
+                response = await self._request_model_async(
+                    context=request_context,
+                    max_tokens=min(self.model_config.max_tokens, max_tokens),
+                )
+                result = parser(response, attempts=attempt)
+                result.metrics = self._model_response_metrics(response)
+                self._record_successful_model_response(
+                    response,
+                    protocol_attempt=attempt,
+                    purpose=purpose,
+                )
+                return result
+            except (ModelProtocolError, ActionParseError) as exc:
+                last_error = exc
+                metrics = (
+                    exc.metrics
+                    if isinstance(exc, ModelProtocolError)
+                    else self._model_response_metrics(response)
+                )
+                raw_content = (
+                    exc.raw_content
+                    if isinstance(exc, ModelProtocolError)
+                    else (response.raw_content if response is not None else None)
+                )
+                self._record_event(
+                    EventType.MODEL_RESPONSE,
+                    f"Rejected invalid {purpose} review",
+                    {
+                        "purpose": purpose,
+                        "raw_content": raw_content,
+                        "protocol_error": str(exc),
+                        "protocol_attempt": attempt,
+                        "metrics": metrics,
+                        "step": self._step_count,
+                    },
+                )
+                if attempt <= config.protocol_retries:
+                    request_context = deepcopy(context)
+                    request_context.append(
+                        MessageBuilder.create_user_message(
+                            text=(
+                                "Previous review output violated the required finish-only format. "
+                                "Re-evaluate the same screenshot and return exactly one valid "
+                                "finish(...) verdict following the system instructions."
+                            )
+                        )
+                    )
+                    continue
+                break
+            except Exception as exc:
+                if self._cancel_event.is_set():
+                    return SemanticReviewResult(
+                        verdict=ReviewVerdict.INCONCLUSIVE,
+                        message="Semantic review cancelled",
+                        purpose=purpose,
+                        attempts=attempt,
+                        error_code="cancelled",
+                    )
+                last_error = exc
+                logger.warning("Semantic review %s failed: %s", purpose, exc)
+                break
+
+        return SemanticReviewResult(
+            verdict=ReviewVerdict.INCONCLUSIVE,
+            message=f"Semantic review could not produce a valid verdict: {last_error}",
+            purpose=purpose,
+            attempts=config.protocol_retries + 1,
+            error_code=f"{purpose}_review_inconclusive",
         )
 
     async def _guard_action_freshness_async(
@@ -902,6 +1250,7 @@ class PhoneAgent:
         observation: ScreenObservation,
         *,
         confirmation_checked: bool = False,
+        task_risk_checked: bool = False,
     ) -> ActionResult:
         if self._should_block_repeated_action(action):
             return ActionResult(
@@ -923,6 +1272,7 @@ class PhoneAgent:
             int(observation.screenshot.display_width or observation.screenshot.width),
             int(observation.screenshot.display_height or observation.screenshot.height),
             confirmation_checked=confirmation_checked,
+            task_risk_checked=task_risk_checked,
         )
 
     def _terminal_action_step_result(

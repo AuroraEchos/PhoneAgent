@@ -66,8 +66,29 @@ class FakeDevice:
 class FakeModelClient:
     responses: list[ModelResponse]
     requests: list[list[dict]] = field(default_factory=list)
+    review_responses: list[ModelResponse] = field(default_factory=list)
+    review_requests: list[list[dict]] = field(default_factory=list)
 
     def request(self, messages, print_stream=False) -> ModelResponse:
+        system_text = str(messages[0].get("content", "")) if messages else ""
+        if "独立的 Android 任务完成复核器" in system_text:
+            self.review_requests.append(copy.deepcopy(messages))
+            if self.review_responses:
+                return self.review_responses.pop(0)
+            return ModelResponse(
+                thinking="",
+                action='finish(success=True, message="current evidence proves the goal")',
+                raw_content='finish(success=True, message="current evidence proves the goal")',
+            )
+        if "独立的 Android 动作风险复核器" in system_text:
+            self.review_requests.append(copy.deepcopy(messages))
+            if self.review_responses:
+                return self.review_responses.pop(0)
+            return ModelResponse(
+                thinking="",
+                action='finish(success=True, message="ALLOW: navigation only")',
+                raw_content='finish(success=True, message="ALLOW: navigation only")',
+            )
         self.requests.append(copy.deepcopy(messages))
         return self.responses.pop(0)
 
@@ -310,6 +331,327 @@ def test_agent_loop_reuses_verified_observation_and_finishes(tmp_path) -> None:
         event["payload"] for event in trajectory["events"] if event["type"] == "precondition"
     )
     assert precondition["fresh"] is True
+
+
+def test_unverified_finish_is_rejected_then_replanned_from_fresh_screen(tmp_path) -> None:
+    finish_response = ModelResponse(
+        thinking="planner claims completion",
+        action='finish(message="done", success=True)',
+        raw_content='finish(message="done", success=True)',
+    )
+    model = FakeModelClient(
+        responses=[finish_response, copy.deepcopy(finish_response)],
+        review_responses=[
+            ModelResponse(
+                thinking="",
+                action='finish(success=False, message="target page is not visible")',
+                raw_content='finish(success=False, message="target page is not visible")',
+            ),
+            ModelResponse(
+                thinking="",
+                action='finish(success=True, message="target page is now visible")',
+                raw_content='finish(success=True, message="target page is now visible")',
+            ),
+        ],
+    )
+    agent = PhoneAgent(
+        agent_config=AgentConfig(
+            max_steps=3,
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+            recovery=RecoveryConfig(retry_delay_seconds=0),
+        ),
+        device=FakeDevice(),
+        model_client=model,
+    )
+
+    assert agent.run("打开目标页面") == "done"
+    assert len(model.requests) == 2
+    assert len(model.review_requests) == 2
+    task_reviews = [
+        event for event in agent.trajectory.events if event["type"] == "task_verification"
+    ]
+    assert [event["payload"]["verdict"] for event in task_reviews] == ["fail", "pass"]
+    error = next(
+        event
+        for event in agent.trajectory.events
+        if event["type"] == "error"
+        and event["payload"]["error_code"] == "task_semantic_verification_failed"
+    )
+    assert error["payload"]["metadata"]["command_dispatched"] is False
+    finish_executions = [
+        event
+        for event in agent.trajectory.events
+        if event["type"] == "execution"
+        and event["payload"].get("action", {}).get("_metadata") == "finish"
+    ]
+    assert len(finish_executions) == 1
+    assert finish_executions[0]["payload"]["metadata"]["task_verification"]["verdict"] == "pass"
+
+
+def test_task_risk_review_forces_confirmation_when_planner_omits_sensitive_flag(
+    tmp_path,
+) -> None:
+    confirmations: list[str] = []
+    model = FakeModelClient(
+        responses=[
+            ModelResponse(
+                thinking="tap unlabeled final control",
+                action='do(action="Tap", element=[500, 500])',
+                raw_content='do(action="Tap", element=[500, 500])',
+            )
+        ],
+        review_responses=[
+            ModelResponse(
+                thinking="",
+                action='finish(success=False, message="CONFIRM: submits a bank transfer")',
+                raw_content='finish(success=False, message="CONFIRM: submits a bank transfer")',
+            )
+        ],
+    )
+    device = FakeDevice()
+    agent = PhoneAgent(
+        agent_config=AgentConfig(
+            max_steps=2,
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+            verification=VerificationConfig(settle_delay_seconds=0, observation_retries=0),
+        ),
+        confirmation_callback=lambda message: confirmations.append(message) or True,
+        device=device,
+        model_client=model,
+    )
+
+    result = agent.step("从银行卡转账100元给张三")
+
+    assert result.success is True
+    assert device.taps == [(32, 32)]
+    assert len(confirmations) == 1
+    assert "submits a bank transfer" in confirmations[0]
+    risk = next(event for event in agent.trajectory.events if event["type"] == "risk_review")
+    assert risk["payload"]["verdict"] == "confirm"
+
+
+def test_ordinary_device_setting_skips_task_risk_review(tmp_path) -> None:
+    confirmations: list[str] = []
+    model = FakeModelClient(
+        responses=[
+            ModelResponse(
+                thinking="open the local setting",
+                action=(
+                    'do(action="Tap", element=[500, 500], '
+                    'description="点击自动锁屏设置")'
+                ),
+                raw_content=(
+                    'do(action="Tap", element=[500, 500], '
+                    'description="点击自动锁屏设置")'
+                ),
+            )
+        ],
+    )
+    device = FakeDevice()
+    agent = PhoneAgent(
+        agent_config=AgentConfig(
+            max_steps=2,
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+            verification=VerificationConfig(settle_delay_seconds=0, observation_retries=0),
+        ),
+        confirmation_callback=lambda message: confirmations.append(message) or True,
+        device=device,
+        model_client=model,
+    )
+
+    result = agent.step("把手机的自动锁屏时间修改为10分钟")
+
+    assert result.success is True
+    assert device.taps == [(32, 32)]
+    assert model.review_requests == []
+    assert confirmations == []
+    assert all(event["type"] != "risk_review" for event in agent.trajectory.events)
+
+
+def test_explicit_do_not_send_boundary_blocks_tap_without_confirmation_or_touch(
+    tmp_path,
+) -> None:
+    confirmations: list[str] = []
+    model = FakeModelClient(
+        responses=[
+            ModelResponse(
+                thinking="incorrectly tries to send",
+                action=(
+                    'do(action="Tap", element=[500, 500], '
+                    'description="点击发送按钮")'
+                ),
+                raw_content=(
+                    'do(action="Tap", element=[500, 500], '
+                    'description="点击发送按钮")'
+                ),
+            )
+        ]
+    )
+    device = FakeDevice()
+    agent = PhoneAgent(
+        agent_config=AgentConfig(
+            max_steps=2,
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+            recovery=RecoveryConfig(retry_delay_seconds=0),
+        ),
+        confirmation_callback=lambda message: confirmations.append(message) or True,
+        device=device,
+        model_client=model,
+    )
+
+    result = agent.step("输入你好，停留在发送前，不要发送")
+
+    assert result.finished is False
+    assert result.error_code == "task_scope_violation"
+    assert device.taps == []
+    assert confirmations == []
+    assert model.review_requests == []
+    risk = next(event for event in agent.trajectory.events if event["type"] == "risk_review")
+    assert risk["payload"]["verdict"] == "block"
+    assert risk["payload"]["metadata"]["source"] == "deterministic_task_boundary"
+
+
+def test_unlabeled_tap_under_explicit_boundary_gets_visual_risk_review(
+    tmp_path,
+) -> None:
+    confirmations: list[str] = []
+    model = FakeModelClient(
+        responses=[
+            ModelResponse(
+                thinking="tap an unlabeled control",
+                action='do(action="Tap", element=[500, 500])',
+                raw_content='do(action="Tap", element=[500, 500])',
+            )
+        ],
+        review_responses=[
+            ModelResponse(
+                thinking="",
+                action='finish(success=False, message="BLOCK: coordinate is the send button")',
+                raw_content=(
+                    'finish(success=False, message="BLOCK: coordinate is the send button")'
+                ),
+            )
+        ],
+    )
+    device = FakeDevice()
+    agent = PhoneAgent(
+        agent_config=AgentConfig(
+            max_steps=2,
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+            recovery=RecoveryConfig(retry_delay_seconds=0),
+        ),
+        confirmation_callback=lambda message: confirmations.append(message) or True,
+        device=device,
+        model_client=model,
+    )
+
+    result = agent.step("输入你好，停留在发送前，不要发送")
+
+    assert result.finished is False
+    assert result.error_code == "task_scope_violation"
+    assert device.taps == []
+    assert confirmations == []
+    assert len(model.review_requests) == 1
+    risk = next(event for event in agent.trajectory.events if event["type"] == "risk_review")
+    assert risk["payload"]["verdict"] == "block"
+    assert risk["payload"]["metadata"]["explicit_negative_boundary"] is True
+    assert risk["payload"]["metadata"]["task_risk_categories"] == []
+    error = next(
+        event
+        for event in agent.trajectory.events
+        if event["type"] == "error"
+        and event["payload"]["error_code"] == "task_scope_violation"
+    )
+    assert error["payload"]["metadata"]["command_dispatched"] is False
+
+
+def test_finish_message_does_not_conflict_with_explicit_task_boundary(tmp_path) -> None:
+    model = FakeModelClient(
+        responses=[
+            ModelResponse(
+                thinking="the requested boundary is satisfied",
+                action='finish(success=True, message="已输入但未发送")',
+                raw_content='finish(success=True, message="已输入但未发送")',
+            )
+        ],
+        review_responses=[
+            ModelResponse(
+                thinking="",
+                action='finish(success=True, message="message is prepared and remains unsent")',
+                raw_content=(
+                    'finish(success=True, message="message is prepared and remains unsent")'
+                ),
+            )
+        ],
+    )
+    agent = PhoneAgent(
+        agent_config=AgentConfig(
+            max_steps=2,
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+        ),
+        device=FakeDevice(),
+        model_client=model,
+    )
+
+    result = agent.step("输入你好，停留在发送前，不要发送")
+
+    assert result.finished is True
+    assert result.success is True
+    assert len(model.review_requests) == 1
+    assert all(event["type"] != "risk_review" for event in agent.trajectory.events)
+    verification = next(
+        event for event in agent.trajectory.events if event["type"] == "task_verification"
+    )
+    assert verification["payload"]["verdict"] == "pass"
+
+
+def test_inconclusive_action_risk_review_fails_closed_to_human_confirmation(
+    tmp_path,
+) -> None:
+    invalid_review = ModelResponse(
+        thinking="",
+        action='finish(success=True, message="maybe safe")',
+        raw_content='finish(success=True, message="maybe safe")',
+    )
+    model = FakeModelClient(
+        responses=[
+            ModelResponse(
+                thinking="tap",
+                action='do(action="Tap", element=[500, 500])',
+                raw_content='do(action="Tap", element=[500, 500])',
+            )
+        ],
+        review_responses=[invalid_review, copy.deepcopy(invalid_review)],
+    )
+    confirmations: list[str] = []
+    device = FakeDevice()
+    agent = PhoneAgent(
+        agent_config=AgentConfig(
+            max_steps=2,
+            verbose=False,
+            trajectory_dir=str(tmp_path),
+            verification=VerificationConfig(settle_delay_seconds=0, observation_retries=0),
+        ),
+        confirmation_callback=lambda message: confirmations.append(message) or True,
+        device=device,
+        model_client=model,
+    )
+
+    result = agent.step("修改银行卡登录密码")
+
+    assert result.success is True
+    assert device.taps == [(32, 32)]
+    assert len(model.review_requests) == 2
+    assert len(confirmations) == 1
+    assert "could not produce a valid verdict" in confirmations[0]
+    risk = next(event for event in agent.trajectory.events if event["type"] == "risk_review")
+    assert risk["payload"]["verdict"] == "inconclusive"
 
 
 def test_pre_action_screen_change_invalidates_tap_without_dispatch(tmp_path) -> None:
@@ -718,7 +1060,9 @@ def test_observation_timeout_is_reobserved_before_model_planning(tmp_path) -> No
     )
 
     assert agent.run("inspect screen") == "done"
-    assert device.observe_calls == 2
+    # One failed observation, one recovered planning observation, and one fresh
+    # observation for independent whole-task completion verification.
+    assert device.observe_calls == 3
     assert len(model.requests) == 1
     error = next(event for event in agent.trajectory.events if event["type"] == "error")
     assert error["payload"]["error_code"] == "observation_failed"

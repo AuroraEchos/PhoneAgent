@@ -25,7 +25,12 @@ from phoneagent.adb.screenshot import ScreenshotCaptureError, get_screenshot
 from phoneagent.config.apps import list_supported_apps
 from phoneagent.devices import AndroidDevice
 from phoneagent.model import ModelConfig
-from phoneagent.runtime import FreshnessConfig, RecoveryConfig, VerificationConfig
+from phoneagent.runtime import (
+    FreshnessConfig,
+    RecoveryConfig,
+    SemanticReviewConfig,
+    VerificationConfig,
+)
 
 # ============================================================================
 # Logging Setup
@@ -270,6 +275,16 @@ Examples:
         action="store_true",
         help="Disable the coordinate-action freshness guard (diagnostic only)"
     )
+    verification_group.add_argument(
+        "--disable-task-verification",
+        action="store_true",
+        help="Disable independent semantic review of finish(success=True) (diagnostic only)",
+    )
+    verification_group.add_argument(
+        "--disable-action-risk-review",
+        action="store_true",
+        help="Disable visual risk review; risky task actions still require human confirmation",
+    )
 
     # Hidden/advanced options
     _add_hidden_options(parser)
@@ -399,6 +414,10 @@ def _build_cli_config(args: argparse.Namespace) -> CLIConfig:
                 enabled=not args.disable_recovery,
                 max_total_recoveries=args.max_recoveries,
                 max_attempts_per_failure=args.recovery_attempts_per_failure,
+            ),
+            semantic_review=SemanticReviewConfig(
+                completion_enabled=not args.disable_task_verification,
+                action_risk_enabled=not args.disable_action_risk_review,
             ),
         )
     except ValueError as exc:

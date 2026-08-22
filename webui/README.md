@@ -72,13 +72,14 @@ Web 服务每次启动会执行一轮与 CLI 一致的检查：
 ```dotenv
 WEB_HOST=127.0.0.1
 WEB_PORT=8765
+WEB_ALLOW_REMOTE=0
 APP_LAUNCH_TIMEOUT_SECONDS=15
 INPUT_PRICE_PER_1M_TOKENS=0
 OUTPUT_PRICE_PER_1M_TOKENS=0
 COST_CURRENCY=CNY
 ```
 
-前两项也可以通过命令行的 `--host` 和 `--port` 覆盖。应用启动超时同时适用于 Web
+host 和 port 也可以通过命令行的 `--host` 和 `--port` 覆盖。应用启动超时同时适用于 Web
 Console 创建的 PhoneAgent 设备实例；应用名称仍由核心静态别名表在执行 `Launch` 时解析。
 
 两个 Token 单价均以“每 100 万 Token”为单位。保持为 `0` 时仍会显示 Token 和耗时曲线，
@@ -87,5 +88,7 @@ Console 创建的 PhoneAgent 设备实例；应用名称仍由核心静态别名
 ## 安全说明
 
 Web Console 能够控制已连接的 Android 设备，并能读取包含任务、动作和模型输出的轨迹。
-当前服务不包含登录或权限系统，因此默认只监听 `127.0.0.1`。不要直接绑定公网地址；
-如果确实需要远程访问，应自行增加反向代理、TLS 和身份认证。
+当前服务不包含登录或权限系统，因此默认只监听 `127.0.0.1`，并会校验所有请求的 Host、
+拒绝跨源 POST、阻止通配地址绑定。非回环地址必须显式传入 `--allow-remote` 或设置
+`WEB_ALLOW_REMOTE=1`；这只是防止误暴露，不会增加身份认证。如果确实需要远程访问，必须
+绑定明确的接口地址，并在前方增加 TLS、身份认证和固定 Host 的反向代理。

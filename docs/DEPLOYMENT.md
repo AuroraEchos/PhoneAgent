@@ -2,6 +2,11 @@
 
 The project website is a dependency-free static site located in `docs/`.
 
+The landing page links to a first-party source guide at `guide.html`. The
+reader loads the Markdown files under `docs/subsystems/` at runtime, renders
+them without a third-party CDN, keeps subsystem links inside the site, and
+rewrites source-code links to the public GitHub repository.
+
 ## 1. Repository URL
 
 The public repository URL is configured near the top of `docs/script.js`:
@@ -60,12 +65,17 @@ http://localhost:8000
 ```text
 docs/
 ├── index.html
+├── guide.html
+├── guide.js
 ├── style.css
 ├── script.js
 ├── 404.html
 ├── .nojekyll
 ├── ARCHITECTURE.md
 ├── DEPLOYMENT.md
+├── subsystems/
+│   ├── README.md
+│   └── *_SUBSYSTEM.md
 └── assets/
     ├── logo.svg
     ├── favicon.svg
@@ -73,3 +83,11 @@ docs/
 ```
 
 The site uses no npm packages, CDN scripts, analytics, cookies, or frontend build step.
+
+`scripts/check_static_site.py` verifies the source-guide manifest and the required 1200 × 630
+social-preview image. CI, release, and Pages workflows also syntax-check every `docs/*.js` file.
+Regenerate the preview asset after a branding change with:
+
+```bash
+uv run python scripts/generate_og_image.py
+```

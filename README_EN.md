@@ -34,6 +34,13 @@ failure behavior over broad workflow integrations or app-specific capabilities.
   entry app is launched before visual planning; later `Launch` actions use the same lazy alias,
   installation, ADB, and foreground-package verification path.
 - Separate command, observable-effect, and deterministic semantic evidence.
+- A successful planner `finish(...)` is rechecked against a fresh screenshot in an isolated
+  completion-review context. Failed or inconclusive reviews return evidence to replanning.
+- Financial/commercial and credential/account-security tasks are classified from the original
+  instruction. Their coordinate actions, and coordinate actions under an explicit "do not
+  send/submit" boundary, receive an isolated visual risk review; confirm or inconclusive outcomes
+  require human approval. Clearly described conflicts are blocked deterministically before review,
+  while unlabeled coordinate actions cannot bypass an explicit boundary.
 - Notification and Quick Settings semantic actions prefer `cmd statusbar`, fall back internally
   to normalized top-edge gestures when opening has no effect, and retain both attempts in the
   trajectory.
@@ -58,6 +65,10 @@ arguments are rejected before execution.
 
 The pre-action freshness guard is enabled by default for `Tap`, `Double Tap`, `Long Press`, and
 `Swipe`. `--disable-pre-action-freshness` is available for diagnostics only.
+
+Task completion and action-risk reviews are also enabled by default. They reduce single-model
+self-approval and missing-risk-marker failures, but remain model judgments rather than external
+ground truth. Published evaluation still requires human or deterministic `task_success` labels.
 
 ## Requirements
 
@@ -131,7 +142,8 @@ uv run phoneagent-web --open-browser
 
 The default address is `http://127.0.0.1:8765`. Device and model preflight checks run once
 per server session and are reused until the server stops. The console has no authentication,
-so keep the default localhost binding unless you add your own protected reverse proxy.
+so the runtime rejects non-loopback and wildcard bindings by default. Remote access requires an
+explicit interface address, `--allow-remote`, and an authenticated TLS reverse proxy.
 
 See [webui/README.md](webui/README.md) for details.
 
@@ -208,7 +220,8 @@ uv run pytest -q
 - ADB is required; PhoneAgent is not an on-device Android application.
 - Observable screen change does not independently prove semantic correctness for coordinate
   actions.
-- Full task completion is currently reported by the planning model.
+- A planning-model completion proposal is gated by a fresh, isolated model review, but that review
+  is still not independent benchmark truth.
 - Protected or authentication-sensitive screens may require manual takeover.
 - Human-readable `Launch` names are limited to the built-in compatibility aliases; unknown apps
   require an explicit Android package or an ordinary visual GUI path.

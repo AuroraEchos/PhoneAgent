@@ -19,3 +19,7 @@ Report the issue privately to the repository maintainer through GitHub's private
 ## Operational safety
 
 PhoneAgent controls a real Android device. Run it only on devices and accounts you are authorized to operate. Keep human confirmation enabled for sensitive actions and review trajectories before sharing them.
+
+The Web Console has no built-in user authentication. Keep its default loopback binding. Remote
+binding requires an explicit non-wildcard interface plus `--allow-remote`, and must remain behind
+an authenticated TLS reverse proxy with a fixed Host configuration.

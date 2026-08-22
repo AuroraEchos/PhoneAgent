@@ -4,8 +4,15 @@ import threading
 
 import pytest
 
-from phoneagent.actions import ActionHandler, ActionParseError, do, parse_action
-from phoneagent.actions.policy import confirmation_message, parse_duration_seconds
+from phoneagent.actions import ActionHandler, ActionParseError, do, finish, parse_action
+from phoneagent.actions.policy import (
+    action_needs_task_risk_review,
+    confirmation_message,
+    parse_duration_seconds,
+    task_has_negative_boundary,
+    task_risk_reasons,
+    task_scope_violation_message,
+)
 from phoneagent.adb.device import _extract_system_panel_state
 from phoneagent.devices import SystemPanelCommandResult
 
@@ -102,6 +109,7 @@ def test_type_keeps_test_keyboard_for_task_then_restores_original_input_method()
         ({"risk_level": "high", "description": "修改账号"}, "修改账号"),
         ({"description": "place order now"}, "Sensitive operation detected"),
         ({"label": "删除联系人"}, "Sensitive operation detected"),
+        ({"description": "点击保存按钮"}, "Sensitive operation detected"),
     ],
 )
 def test_confirmation_policy_is_independent_from_device_execution(
@@ -113,6 +121,107 @@ def test_confirmation_policy_is_independent_from_device_execution(
 
 def test_confirmation_policy_allows_unmarked_navigation() -> None:
     assert confirmation_message({"action": "Tap", "description": "打开设置"}) is None
+
+
+def test_task_aware_policy_does_not_depend_on_model_sensitive_flag() -> None:
+    action = {"_metadata": "do", "action": "Tap", "element": [500, 500]}
+    task = "从银行卡转账100元给张三"
+
+    assert task_risk_reasons(task) == ("financial_or_commercial",)
+    assert action_needs_task_risk_review(action, task) is True
+    assert "Task-aware confirmation" in str(confirmation_message(action, task=task))
+    assert confirmation_message(action, task=task, task_risk_checked=True) is None
+
+
+def test_explicit_negative_boundary_independently_triggers_coordinate_review() -> None:
+    action = {"_metadata": "do", "action": "Tap", "element": [500, 500]}
+    task = "输入消息，停留在发送前，不要发送"
+
+    assert task_risk_reasons(task) == ()
+    assert task_has_negative_boundary(task) is True
+    assert action_needs_task_risk_review(action, task) is True
+    assert "explicit negative task boundary" in str(
+        confirmation_message(action, task=task)
+    )
+    assert confirmation_message(action, task=task, task_risk_checked=True) is None
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        "把手机的自动锁屏时间修改为10分钟",
+        "修改屏幕亮度",
+        "把音量调到50%",
+        "给张三发送消息",
+        "删除一张测试照片",
+        "预约明天的会议",
+    ],
+)
+def test_ordinary_tasks_do_not_trigger_task_risk_review(task: str) -> None:
+    action = {"_metadata": "do", "action": "Tap", "element": [500, 500]}
+
+    assert task_risk_reasons(task) == ()
+    assert action_needs_task_risk_review(action, task) is False
+
+
+@pytest.mark.parametrize(
+    ("task", "expected"),
+    [
+        ("支付100元", ("financial_or_commercial",)),
+        ("从银行卡转账100元", ("financial_or_commercial",)),
+        ("购买一张机票", ("financial_or_commercial",)),
+        ("修改银行卡登录密码", ("credential_or_account_security",)),
+        ("输入短信验证码", ("credential_or_account_security",)),
+        ("删除银行账户", ("credential_or_account_security",)),
+    ],
+)
+def test_only_high_consequence_tasks_trigger_task_risk_review(
+    task: str,
+    expected: tuple[str, ...],
+) -> None:
+    assert task_risk_reasons(task) == expected
+
+
+def test_application_name_alone_is_not_treated_as_payment_authorization() -> None:
+    assert task_risk_reasons("打开支付宝") == ()
+    assert task_risk_reasons("打开招商银行") == ()
+    assert confirmation_message({"action": "Tap", "description": "打开支付宝"}) is None
+
+
+def test_explicit_negative_task_boundary_blocks_described_final_action() -> None:
+    action = {
+        "_metadata": "do",
+        "action": "Tap",
+        "element": [800, 900],
+        "description": "点击发送按钮",
+    }
+    task = "输入消息，停留在发送前，不要发送"
+
+    assert task_has_negative_boundary(task) is True
+    assert "explicit user boundary" in str(task_scope_violation_message(action, task))
+
+
+def test_explicit_negative_task_boundary_blocks_described_api_side_effect() -> None:
+    action = do(action="Call_API", instruction="发送消息")
+    task = "准备好消息内容，但不要发送"
+
+    assert "explicit user boundary" in str(task_scope_violation_message(action, task))
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        finish(message="已输入但未发送", success=True),
+        do(action="Note", message="记录：不要发送"),
+        do(action="Take_over", message="请检查但不要发送"),
+    ],
+)
+def test_task_boundary_scope_check_ignores_terminal_and_message_only_actions(
+    action: dict,
+) -> None:
+    task = "输入消息，停留在发送前，不要发送"
+
+    assert task_scope_violation_message(action, task) is None
 
 
 @pytest.mark.parametrize(

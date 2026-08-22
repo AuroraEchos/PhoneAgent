@@ -21,7 +21,12 @@ from phoneagent import AgentConfig, PhoneAgent
 from phoneagent.cli import check_model_api, check_system_requirements
 from phoneagent.config.env import load_env
 from phoneagent.model import ModelConfig
-from phoneagent.runtime import AgentEvent, RecoveryConfig, VerificationConfig
+from phoneagent.runtime import (
+    AgentEvent,
+    RecoveryConfig,
+    SemanticReviewConfig,
+    VerificationConfig,
+)
 
 
 DEVICE_CHECKS = (
@@ -40,6 +45,13 @@ def _env_int(name: str, default: int) -> int:
 
 def _env_float(name: str, default: float) -> float:
     return float(os.getenv(name, str(default)))
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().casefold() not in {"0", "false", "no", "off"}
 
 
 def _build_pricing() -> dict[str, Any]:
@@ -112,6 +124,10 @@ def _build_configs(project_root: Path) -> tuple[ModelConfig, AgentConfig, Path]:
         recovery=RecoveryConfig(
             max_total_recoveries=_env_int("MAX_RECOVERIES", 8),
             max_attempts_per_failure=_env_int("RECOVERY_ATTEMPTS", 2),
+        ),
+        semantic_review=SemanticReviewConfig(
+            completion_enabled=_env_bool("TASK_SEMANTIC_VERIFICATION", True),
+            action_risk_enabled=_env_bool("ACTION_RISK_REVIEW", True),
         ),
     )
     return model_config, agent_config, trajectory_dir
@@ -252,6 +268,8 @@ class ConsoleRuntime:
             "last_thinking": "",
             "last_action": None,
             "last_verification": None,
+            "last_task_verification": None,
+            "last_risk_review": None,
             "last_recovery": None,
         }
 
@@ -589,12 +607,20 @@ class ConsoleRuntime:
                 self.task["phase"] = str(payload.get("current", self.task["phase"]))
             elif event.type.value == "observation" and isinstance(payload, dict):
                 self.task["current_app"] = str(payload.get("current_app", ""))
-            elif event.type.value == "model_response" and isinstance(payload, dict):
+            elif (
+                event.type.value == "model_response"
+                and isinstance(payload, dict)
+                and payload.get("purpose", "planning") == "planning"
+            ):
                 self.task["last_thinking"] = str(payload.get("thinking", ""))
             elif event.type.value == "action" and isinstance(payload, dict):
                 self.task["last_action"] = payload.get("action")
             elif event.type.value == "verification" and isinstance(payload, dict):
                 self.task["last_verification"] = payload
+            elif event.type.value == "task_verification" and isinstance(payload, dict):
+                self.task["last_task_verification"] = payload
+            elif event.type.value == "risk_review" and isinstance(payload, dict):
+                self.task["last_risk_review"] = payload
             elif event.type.value == "recovery" and isinstance(payload, dict):
                 self.task["last_recovery"] = payload
                 if payload.get("stage") == "outcome":

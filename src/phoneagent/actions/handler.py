@@ -79,13 +79,22 @@ class ActionHandler:
             return f"{type(exc).__name__}: {exc}"
         return None
 
-    def request_confirmation(self, action: dict[str, Any]) -> ActionResult | None:
+    def request_confirmation(
+        self,
+        action: dict[str, Any],
+        *,
+        message_override: str | None = None,
+        task_risk_checked: bool = False,
+    ) -> ActionResult | None:
         """Ask for confirmation without dispatching the validated action."""
         try:
             action = validate_action(action)
         except ActionParseError as exc:
             return ActionResult(False, False, str(exc), error_code="invalid_action")
-        message = self._confirmation_message(action)
+        message = message_override or self._confirmation_message(
+            action,
+            task_risk_checked=task_risk_checked,
+        )
         if message and not self.confirmation_callback(message):
             return ActionResult(
                 False,
@@ -103,6 +112,7 @@ class ActionHandler:
         screen_height: int,
         *,
         confirmation_checked: bool = False,
+        task_risk_checked: bool = False,
     ) -> ActionResult:
         try:
             action = validate_action(action)
@@ -143,7 +153,10 @@ class ActionHandler:
         }
 
         if not confirmation_checked:
-            confirmation_result = self.request_confirmation(action)
+            confirmation_result = self.request_confirmation(
+                action,
+                task_risk_checked=task_risk_checked,
+            )
             if confirmation_result is not None:
                 return confirmation_result
 
@@ -388,9 +401,17 @@ class ActionHandler:
         output = self.api_callback(instruction)
         return ActionResult(True, False, message=output or "API call completed")
 
-    @staticmethod
-    def _confirmation_message(action: dict[str, Any]) -> str | None:
-        return confirmation_message(action)
+    def _confirmation_message(
+        self,
+        action: dict[str, Any],
+        *,
+        task_risk_checked: bool = False,
+    ) -> str | None:
+        return confirmation_message(
+            action,
+            task=self.task,
+            task_risk_checked=task_risk_checked,
+        )
 
     @staticmethod
     def _default_confirmation(message: str) -> bool:

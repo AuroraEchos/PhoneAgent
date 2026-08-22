@@ -108,6 +108,9 @@ def summarize_trajectory(
     model_time_available = False
     error_codes: Counter[str] = Counter()
     action_counts: Counter[str] = Counter()
+    model_request_purposes: Counter[str] = Counter()
+    task_verification_verdicts: Counter[str] = Counter()
+    risk_review_verdicts: Counter[str] = Counter()
     recoveries = 0
 
     for event in events:
@@ -115,6 +118,7 @@ def summarize_trajectory(
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
         if event_type == "model_request":
             model_requests += 1
+            model_request_purposes[str(payload.get("purpose") or "planning")] += 1
         elif event_type == "model_response":
             metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
             for field_name, accumulator in (
@@ -143,6 +147,10 @@ def summarize_trajectory(
                 action_counts[str(name)] += 1
         elif event_type == "recovery" and payload.get("stage") == "outcome":
             recoveries += 1
+        elif event_type == "task_verification" and payload.get("verdict"):
+            task_verification_verdicts[str(payload["verdict"])] += 1
+        elif event_type == "risk_review" and payload.get("verdict"):
+            risk_review_verdicts[str(payload["verdict"])] += 1
 
         error_code = payload.get("error_code")
         if error_code:
@@ -166,12 +174,15 @@ def summarize_trajectory(
         "duration_seconds": _finite_number(trajectory.get("duration_seconds")),
         "steps": steps,
         "model_requests": model_requests,
+        "model_request_purposes": dict(sorted(model_request_purposes.items())),
         "model_time_seconds": model_time_seconds if model_time_available else None,
         "prompt_tokens": prompt_tokens if "prompt" in token_fields_available else None,
         "completion_tokens": completion_tokens if "completion" in token_fields_available else None,
         "total_tokens": total_tokens if "total" in token_fields_available else None,
         "actions": dict(sorted(action_counts.items())),
         "recoveries": recoveries,
+        "task_verification_verdicts": dict(sorted(task_verification_verdicts.items())),
+        "risk_review_verdicts": dict(sorted(risk_review_verdicts.items())),
         "error_codes": dict(sorted(error_codes.items())),
     }
 
@@ -200,8 +211,14 @@ def build_evaluation_report(
     ]
     token_totals = [run["total_tokens"] for run in runs if run["total_tokens"] is not None]
     all_errors: Counter[str] = Counter()
+    all_task_verdicts: Counter[str] = Counter()
+    all_risk_verdicts: Counter[str] = Counter()
+    all_request_purposes: Counter[str] = Counter()
     for run in runs:
         all_errors.update(run["error_codes"])
+        all_task_verdicts.update(run["task_verification_verdicts"])
+        all_risk_verdicts.update(run["risk_review_verdicts"])
+        all_request_purposes.update(run["model_request_purposes"])
 
     total = len(runs)
     return {
@@ -222,9 +239,12 @@ def build_evaluation_report(
             "average_duration_seconds": mean(durations) if durations else None,
             "average_steps": mean(run["steps"] for run in runs) if runs else None,
             "total_model_requests": sum(run["model_requests"] for run in runs),
+            "model_request_purposes": dict(sorted(all_request_purposes.items())),
             "total_model_time_seconds": sum(model_times) if model_times else None,
             "total_tokens": sum(token_totals) if token_totals else None,
             "total_recoveries": sum(run["recoveries"] for run in runs),
+            "task_verification_verdicts": dict(sorted(all_task_verdicts.items())),
+            "risk_review_verdicts": dict(sorted(all_risk_verdicts.items())),
             "error_codes": dict(sorted(all_errors.items())),
         },
         "runs": runs,

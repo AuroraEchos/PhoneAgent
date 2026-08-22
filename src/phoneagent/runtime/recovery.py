@@ -107,6 +107,9 @@ class RecoveryManager:
         "empty_api_instruction",
         "empty_note",
         "pre_action_observation_changed",
+        "task_scope_violation",
+        "task_semantic_verification_failed",
+        "task_semantic_verification_inconclusive",
     }
     _OBSERVATION_ERRORS = {
         "observation_failed",

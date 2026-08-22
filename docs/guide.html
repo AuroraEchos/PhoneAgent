@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f0e8">
+  <meta name="color-scheme" content="light">
+
+  <title>PhoneAgent 源码导读 — 子系统技术文档</title>
+  <meta name="description" content="沿着 PhoneAgent 当前源码，系统理解入口、Agent 编排、设备观测、模型上下文、动作、安全、验证、恢复、评估与 Web 控制台。">
+  <meta name="author" content="Wenhao Liu">
+  <link rel="canonical" href="https://auroraechos.github.io/PhoneAgent/guide.html">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://auroraechos.github.io/PhoneAgent/guide.html">
+  <meta property="og:title" content="PhoneAgent 源码导读">
+  <meta property="og:description" content="十一篇依照当前代码编写的 PhoneAgent 子系统技术文档。">
+  <meta property="og:image" content="https://auroraechos.github.io/PhoneAgent/assets/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="PhoneAgent 子系统源码导读">
+  <meta property="og:site_name" content="PhoneAgent">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://auroraechos.github.io/PhoneAgent/assets/og-image.png">
+
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="assets/logo.svg" as="image" type="image/svg+xml">
+  <script>document.documentElement.classList.add("js");</script>
+  <link rel="stylesheet" href="style.css">
+  <script src="script.js?v=20260822" defer></script>
+  <script src="guide.js?v=20260822" defer></script>
+</head>
+<body class="docs-page">
+  <div class="scroll-progress" aria-hidden="true"><span data-scroll-progress></span></div>
+  <a class="skip-link" href="#docs-content">跳到文档正文</a>
+
+  <header class="site-header docs-header" data-header>
+    <div class="container nav-shell">
+      <a class="brand" href="./" aria-label="返回 PhoneAgent 项目主页">
+        <img src="assets/logo.svg" alt="" width="34" height="34">
+        <span>PhoneAgent</span>
+      </a>
+      <span class="header-release" aria-label="Current release">v0.2.1</span>
+
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" data-nav-toggle>
+        <span class="sr-only">打开导航</span>
+        <span></span><span></span><span></span>
+      </button>
+
+      <nav class="site-nav" id="site-nav" aria-label="主导航" data-nav>
+        <a href="./#features">核心能力</a>
+        <a href="./#architecture">系统架构</a>
+        <a class="active" href="guide.html" aria-current="page">源码导读</a>
+        <a href="./#quickstart">快速开始</a>
+      </nav>
+
+      <div class="nav-actions">
+        <a class="button button-ghost button-small" href="./">
+          <span>项目主页</span>
+        </a>
+        <a class="button button-ghost button-small" data-link="github" href="#" target="_blank" rel="noreferrer">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 .8a11.4 11.4 0 0 0-3.6 22.2c.6.1.8-.3.8-.6v-2.2c-3.4.7-4.1-1.4-4.1-1.4-.5-1.4-1.3-1.8-1.3-1.8-1.1-.8.1-.8.1-.8 1.2.1 1.9 1.2 1.9 1.2 1.1 1.9 2.8 1.4 3.5 1.1.1-.8.4-1.4.8-1.7-2.7-.3-5.6-1.4-5.6-6.1 0-1.4.5-2.5 1.2-3.4-.1-.3-.5-1.6.1-3.4 0 0 1-.3 3.5 1.3a12.1 12.1 0 0 1 6.4 0c2.4-1.6 3.5-1.3 3.5-1.3.7 1.8.3 3.1.1 3.4.8.9 1.2 2 1.2 3.4 0 4.8-2.9 5.8-5.7 6.1.4.4.8 1.2.8 2.3v3.4c0 .3.2.7.8.6A11.4 11.4 0 0 0 12 .8Z"/></svg>
+          <span>GitHub</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="docs-intro">
+      <div class="container docs-intro-grid">
+        <div>
+          <div class="eyebrow"><span class="status-dot" aria-hidden="true"></span><span>对应当前版本 v0.2.1</span></div>
+          <h1>PhoneAgent<br><span>子系统源码导读</span></h1>
+          <p>从入口走到设备副作用，再从验证与恢复走到可审计轨迹。这里不是功能宣传，而是一套可按顺序阅读、能回到具体源码和测试的技术文档。</p>
+        </div>
+        <div class="docs-intro-stats" aria-label="文档统计">
+          <div><strong>11</strong><span>子系统</span></div>
+          <div><strong>3,600+</strong><span>行导读</span></div>
+          <div><strong>1</strong><span>完整链路</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="docs-workspace" aria-label="源码导读阅读区">
+      <div class="container">
+        <button class="docs-directory-toggle" type="button" aria-expanded="false" aria-controls="docs-sidebar" data-docs-nav-toggle>
+          <span>选择子系统</span>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+
+        <div class="docs-layout">
+          <aside class="docs-sidebar" id="docs-sidebar" data-docs-sidebar>
+            <div class="docs-sidebar-inner">
+              <div class="docs-sidebar-title"><span>Source Guide</span><small>源码阅读目录</small></div>
+
+              <nav class="docs-directory" aria-label="子系统文档">
+                <div class="docs-directory-group">
+                  <span>总览</span>
+                  <a href="guide.html?doc=overview" data-doc-link="overview"><i>00</i><b>子系统总览</b></a>
+                </div>
+                <div class="docs-directory-group">
+                  <span>运行基础</span>
+                  <a href="guide.html?doc=entry" data-doc-link="entry"><i>01</i><b>入口与配置</b></a>
+                  <a href="guide.html?doc=device" data-doc-link="device"><i>02</i><b>设备与观测</b></a>
+                  <a href="guide.html?doc=model" data-doc-link="model"><i>03</i><b>模型与上下文</b></a>
+                </div>
+                <div class="docs-directory-group">
+                  <span>Agent 核心</span>
+                  <a href="guide.html?doc=agent" data-doc-link="agent"><i>04</i><b>Agent 编排与状态</b></a>
+                  <a href="guide.html?doc=action" data-doc-link="action"><i>05</i><b>动作子系统</b></a>
+                </div>
+                <div class="docs-directory-group">
+                  <span>安全与可靠性</span>
+                  <a href="guide.html?doc=semantic" data-doc-link="semantic"><i>06</i><b>语义复核</b></a>
+                  <a href="guide.html?doc=freshness" data-doc-link="freshness"><i>07</i><b>执行前新鲜度</b></a>
+                  <a href="guide.html?doc=verification" data-doc-link="verification"><i>08</i><b>动作效果验证</b></a>
+                  <a href="guide.html?doc=recovery" data-doc-link="recovery"><i>09</i><b>失败恢复</b></a>
+                </div>
+                <div class="docs-directory-group">
+                  <span>证据与界面</span>
+                  <a href="guide.html?doc=observability" data-doc-link="observability"><i>10</i><b>可观测性与评估</b></a>
+                  <a href="guide.html?doc=web" data-doc-link="web"><i>11</i><b>本地 Web 控制台</b></a>
+                </div>
+              </nav>
+
+              <a class="docs-sidebar-github" data-guide-source href="#" target="_blank" rel="noreferrer">
+                <span>在 GitHub 查看原始文档</span><span>↗</span>
+              </a>
+            </div>
+          </aside>
+
+          <article class="docs-article" id="docs-content" tabindex="-1" data-doc-content aria-live="polite">
+            <div class="docs-loading" data-doc-loading>
+              <span></span>
+              <p>正在加载源码导读……</p>
+            </div>
+          </article>
+
+          <aside class="docs-toc" aria-label="本文目录">
+            <div class="docs-toc-inner">
+              <span>本文目录</span>
+              <nav data-doc-toc></nav>
+            </div>
+          </aside>
+        </div>
+
+        <nav class="docs-pager" aria-label="上一篇和下一篇" data-doc-pager></nav>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer docs-footer">
+    <div class="container footer-grid">
+      <div class="footer-brand">
+        <a class="brand" href="./"><img src="assets/logo.svg" alt="" width="32" height="32"><span>PhoneAgent</span></a>
+        <p>视觉驱动的 Android Agent Runtime。</p>
+      </div>
+      <div class="footer-links">
+        <div><b>继续阅读</b><a href="./">项目主页</a><a href="ARCHITECTURE.md" target="_blank" rel="noreferrer">架构说明</a><a data-link="readme" href="#" target="_blank" rel="noreferrer">README</a></div>
+        <div><b>参与项目</b><a data-link="github" href="#" target="_blank" rel="noreferrer">GitHub</a><a data-link="issues" href="#" target="_blank" rel="noreferrer">Issues</a><a data-link="license" href="#" target="_blank" rel="noreferrer">Apache-2.0</a></div>
+      </div>
+    </div>
+    <div class="container footer-bottom">
+      <span>© <span data-current-year></span> Wenhao Liu. PhoneAgent is open source.</span>
+      <span>Code · Contract · Evidence · Boundary</span>
+    </div>
+  </footer>
+
+  <button class="back-to-top" type="button" data-back-to-top aria-label="返回顶部">
+    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 14 6-6 6 6"/></svg>
+  </button>
+
+  <noscript>
+    <div class="docs-noscript">此阅读页需要 JavaScript 来渲染仓库中的 Markdown。你仍可在 <a href="https://github.com/AuroraEchos/PhoneAgent/tree/main/docs/subsystems">GitHub</a> 阅读全部原始文档。</div>
+  </noscript>
+</body>
+</html>

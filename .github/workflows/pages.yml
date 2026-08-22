@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - "docs/**"
+      - "scripts/check_static_site.py"
+      - "scripts/generate_og_image.py"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -30,6 +32,13 @@ jobs:
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
+
+      - name: Validate documentation assets
+        run: |
+          for file in docs/*.js; do
+            node --check "$file"
+          done
+          python3 scripts/check_static_site.py
 
       - name: Upload static site
         uses: actions/upload-pages-artifact@v3

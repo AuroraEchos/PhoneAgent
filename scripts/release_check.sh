@@ -27,11 +27,14 @@ uv run python -m compileall -q src tests webui
 echo "[4/9] Running Ruff"
 uv run ruff check .
 
-echo "[5/9] Checking Web Console modules"
+echo "[5/9] Checking Web and documentation assets"
 for file in webui/static/*.js; do
   node --input-type=module --check < "$file"
 done
-node --check docs/script.js
+for file in docs/*.js; do
+  node --check "$file"
+done
+uv run python scripts/check_static_site.py
 
 echo "[6/9] Running tests"
 uv run pytest -q

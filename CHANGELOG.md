@@ -6,6 +6,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-22
+
+### Added
+
+- Fresh, isolated whole-task semantic review before accepting `finish(success=True)`, with
+  fail-closed replanning, structured `task_verification` events, and bounded review protocol
+  retries.
+- Task-aware high-consequence action classification and screenshot-backed `ALLOW` / `CONFIRM` /
+  `BLOCK` review. Missing or invalid risk verdicts require human confirmation.
+- Evaluation summaries for model-request purposes and task/risk review verdicts, plus Web Console
+  timeline support for both new event types.
+- A deterministic 1200 × 630 documentation social-preview asset and static-site validation for
+  source-guide manifests, required assets, and every documentation JavaScript file.
+
+### Fixed
+
+- Made explicit negative task boundaries independently send unlabeled coordinate actions to
+  screenshot-backed review, while described conflicts are rejected with zero touch.
+- Limited deterministic negative-boundary matching to side-effect actions so successful
+  `finish(...)` and message-only actions cannot be rejected by their explanatory text.
+
+### Security
+
+- Validate every Web Console Host header, parse POST Origin against that trusted authority, add
+  cross-origin isolation and restrictive permissions headers, require explicit opt-in for
+  non-loopback binding, and reject wildcard bind addresses.
+
 ## [0.2.0] - 2026-08-12
 
 ### Added

@@ -1,8 +1,8 @@
 # PhoneAgent Architecture
 
-This document describes the converged PhoneAgent runtime on the `v0.2.0` refactor branch.
-PhoneAgent is
-deliberately scoped as a Research Runtime / Evaluation Runtime for real Android devices.
+This document describes the current `v0.2.1` runtime: the `v0.2.0` refactor baseline plus isolated
+semantic review and Web hardening. PhoneAgent is deliberately scoped as a Research Runtime /
+Evaluation Runtime for real Android devices.
 
 ## Runtime overview
 
@@ -153,6 +153,18 @@ Actions marked sensitive, requiring confirmation, or detected as high-risk are p
 configured confirmation callback. Rejection is terminal for that action and is never
 overridden by recovery.
 
+The confirmation boundary does not trust the planner to set `sensitive=True`. The policy also
+classifies the original user task, but the consequence classifier is intentionally limited to
+financial/commercial and credential/account-security operations. Coordinate actions in those
+tasks, plus coordinate actions under an explicit negative task boundary, receive an isolated
+screenshot-backed risk review with `ALLOW`, `CONFIRM`, or `BLOCK` outcomes. `CONFIRM` and invalid
+review output fail closed to the human callback. A deterministic match between a described
+side-effect action and an explicit "do not send/submit" boundary returns a zero-touch
+`task_scope_violation` before model review. This deterministic check is limited to coordinate
+actions and `Call_API`; terminal and message-only actions such as `finish`, `Note`, and
+`Take_over` are excluded. Disabling model risk review conservatively sends every otherwise
+reviewable coordinate action to human confirmation.
+
 ### Pre-action visual concurrency guard
 
 Coordinate actions are bound to the screenshot that produced them, but Android applications may
@@ -211,6 +223,20 @@ Repeated-coordinate detection applies only to actions that actually contain `ele
 or `end`. It deliberately ignores descriptions so rephrasing the same tap does not bypass loop
 protection, while unrelated `Type` and `Launch` actions are not grouped as coordinate repeats.
 
+### Whole-task completion review
+
+`finish(success=True)` is a proposal, not a terminal fact. Before accepting it, the runtime takes
+a fresh trusted observation and creates a new model context containing only the original goal,
+the latest screenshot, compact action/effect evidence, and completion-review instructions. It
+does not reuse planner conversation history. The reviewer may return pass or fail; invalid output,
+transport failure, missing visual evidence, and an explicit failure are non-terminal structured
+failures that return control to replanning. The accepted verdict is stored in a
+`task_verification` event and in the terminal execution metadata.
+
+This removes direct planner self-approval, but it is still a model-backed review, potentially
+using the same configured model. It is therefore runtime safety evidence rather than independent
+benchmark truth. External human or deterministic `task_success` annotation remains required.
+
 ### Minimal recovery policy
 
 Recovery has only five strategies:
@@ -227,8 +253,8 @@ recovery branches; the model can select explicit navigation actions after a fres
 ### Trajectory
 
 `TrajectoryRecorder` writes a temporary JSON file and atomically replaces the final path.
-Trajectory schema version remains `1.0` through the PhoneAgent `v0.2.0` refactor, so existing
-`v0.1.4` runs remain readable.
+Trajectory schema version remains `1.0` in PhoneAgent `v0.2.1`, so existing `v0.1.4` runs remain
+readable.
 
 Each event contains its type, timestamp, message, payload, and optional top-level step. Pre-action
 checks additionally record capture age, target/global difference ratios, dispatch authorization,
@@ -241,7 +267,8 @@ and evidence. They must be reviewed and redacted before publication.
 ### Offline evaluation
 
 `phoneagent-eval` reads saved trajectories without initializing a model or device. It reports
-runtime completion, steps, actions, recoveries, structured failures, latency, and Token usage.
+runtime completion, steps, actions, recoveries, structured failures, latency, Token usage, model
+request purposes, and task/risk review verdicts.
 Runtime completion is deliberately not treated as task correctness. `task_success` enters a
 report only through an external human or deterministic annotation keyed by trajectory `run_id`.
 
@@ -253,13 +280,20 @@ Callbacks whose generation does not match the current task are ignored, and a te
 finishes cleanup before the next task starts. This prevents delayed events, notes, or prompts
 from an older task mutating the next task snapshot.
 
+The HTTP boundary validates every request Host against the explicit bind host and validates POST
+Origin as a parsed same-origin authority. Non-loopback binding requires an explicit
+`--allow-remote` opt-in, and wildcard bindings are rejected. This prevents accidental exposure
+and closes the Host-header trust gap, but it does not add authentication; any remote deployment
+still requires an authenticated TLS reverse proxy.
+
 ## Trust boundaries
 
-PhoneAgent `v0.2.0` does not claim independent task-level correctness:
+The current PhoneAgent runtime does not claim independent task-level correctness:
 
 - screen change does not prove that a coordinate target was semantically correct;
 - secure or protected surfaces may be unobservable;
-- the planning model currently reports full task completion through `finish(...)`;
+- the planning model proposes completion through `finish(...)`, and the isolated reviewer can
+  still be wrong or share the same model biases;
 - deterministic verification is only possible when Android state exposes sufficient evidence;
 - real-device behavior varies by Android version, vendor ROM, launcher, permissions, and model
   provider.

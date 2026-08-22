@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import mimetypes
 import os
@@ -13,13 +14,67 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlsplit
 
 from webui.runtime import ConsoleRuntime
 
 
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 MAX_REQUEST_BYTES = 64 * 1024
+_WILDCARD_BIND_HOSTS = {"0.0.0.0", "::"}
+
+
+def _host_key(value: str) -> str:
+    return str(value or "").strip().casefold()
+
+
+def _is_loopback_host(host: str) -> bool:
+    """Return whether a bind host is explicitly local-only."""
+    normalized = _host_key(host)
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def _validate_bind_host(host: str, *, allow_remote: bool) -> None:
+    """Reject accidental remote exposure and ambiguous wildcard bindings."""
+    normalized = _host_key(host)
+    if not normalized:
+        raise ValueError("Web Console host cannot be empty")
+    if normalized in _WILDCARD_BIND_HOSTS:
+        raise ValueError(
+            "Wildcard Web Console bindings are not supported; bind an explicit interface "
+            "address behind an authenticated reverse proxy"
+        )
+    if not _is_loopback_host(normalized) and not allow_remote:
+        raise ValueError(
+            "Refusing a non-loopback Web Console binding without --allow-remote"
+        )
+
+
+def _parse_authority(value: str, *, default_port: int) -> tuple[str, int] | None:
+    """Parse one HTTP authority without trusting paths, credentials, or fragments."""
+    text = str(value or "").strip()
+    if not text or any(character.isspace() for character in text):
+        return None
+    try:
+        parsed = urlsplit(f"http://{text}")
+        port = parsed.port if parsed.port is not None else default_port
+    except ValueError:
+        return None
+    if (
+        not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    return _host_key(parsed.hostname), port
 
 
 class ConsoleHTTPServer(ThreadingHTTPServer):
@@ -27,10 +82,19 @@ class ConsoleHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
     def __init__(self, address: tuple[str, int], runtime: ConsoleRuntime):
+        bind_host = _host_key(address[0])
+        if bind_host in _WILDCARD_BIND_HOSTS:
+            raise ValueError("ConsoleHTTPServer requires an explicit bind host")
         if ":" in address[0]:
             self.address_family = socket.AF_INET6
         super().__init__(address, ConsoleRequestHandler)
         self.runtime = runtime
+        allowed_hosts = {bind_host}
+        if _is_loopback_host(bind_host):
+            allowed_hosts.add("localhost")
+            if bind_host == "localhost":
+                allowed_hosts.update({"127.0.0.1", "::1"})
+        self.allowed_hosts = frozenset(allowed_hosts)
 
 
 class ConsoleRequestHandler(BaseHTTPRequestHandler):
@@ -38,6 +102,9 @@ class ConsoleRequestHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
+        if self._request_authority() is None:
+            self._send_error_json(HTTPStatus.MISDIRECTED_REQUEST, "Invalid Host header")
+            return
         parsed = urlparse(self.path)
         if parsed.path == "/api/state":
             self._send_json(self.server.runtime.snapshot())
@@ -72,6 +139,9 @@ class ConsoleRequestHandler(BaseHTTPRequestHandler):
         self._send_static(parsed.path)
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
+        if self._request_authority() is None:
+            self._send_error_json(HTTPStatus.MISDIRECTED_REQUEST, "Invalid Host header")
+            return
         if not self._same_origin_request():
             self._send_error_json(HTTPStatus.FORBIDDEN, "Cross-origin request rejected")
             return
@@ -146,11 +216,39 @@ class ConsoleRequestHandler(BaseHTTPRequestHandler):
         return payload
 
     def _same_origin_request(self) -> bool:
+        authority = self._request_authority()
+        if authority is None:
+            return False
         origin = self.headers.get("Origin")
         if not origin:
             return True
-        host = self.headers.get("Host", "")
-        return origin in {f"http://{host}", f"https://{host}"}
+        try:
+            parsed = urlsplit(origin)
+            origin_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        except ValueError:
+            return False
+        return bool(
+            parsed.scheme in {"http", "https"}
+            and parsed.hostname
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.path in {"", "/"}
+            and not parsed.query
+            and not parsed.fragment
+            and (_host_key(parsed.hostname), origin_port) == authority
+        )
+
+    def _request_authority(self) -> tuple[str, int] | None:
+        authority = _parse_authority(
+            self.headers.get("Host", ""),
+            default_port=self.server.server_port,
+        )
+        if authority is None:
+            return None
+        host, port = authority
+        if host not in self.server.allowed_hosts or port != self.server.server_port:
+            return None
+        return authority
 
     def _send_static(self, request_path: str) -> None:
         mapping = {
@@ -210,6 +308,12 @@ class ConsoleRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header(
+            "Permissions-Policy",
+            "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        )
 
     def log_message(self, format: str, *args: Any) -> None:
         if self.path.startswith("/api/") and args and str(args[1]).startswith("2"):
@@ -234,6 +338,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Open the console in the default browser after the server starts",
     )
+    parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        default=os.getenv("WEB_ALLOW_REMOTE", "").strip().casefold()
+        in {"1", "true", "yes", "on"},
+        help=(
+            "Allow an explicit non-loopback bind address; requires an authenticated "
+            "reverse proxy and does not permit wildcard bindings"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -241,17 +355,20 @@ def main() -> int:
     args = parse_args()
     if not 1 <= args.port <= 65535:
         raise SystemExit("--port must be in the range 1..65535")
-    if args.host not in {"127.0.0.1", "localhost", "::1"}:
+    try:
+        _validate_bind_host(args.host, allow_remote=args.allow_remote)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    if not _is_loopback_host(args.host):
         print(
             "WARNING: this console controls an Android device and has no authentication. "
-            "Binding beyond localhost is not recommended."
+            "The explicit remote bind must remain behind an authenticated reverse proxy."
         )
 
     runtime = ConsoleRuntime(Path.cwd())
     server = ConsoleHTTPServer((args.host, args.port), runtime)
     runtime.start_checks()
-    host_for_url = "127.0.0.1" if args.host in {"0.0.0.0", "::"} else args.host
-    url_host = f"[{host_for_url}]" if ":" in host_for_url else host_for_url
+    url_host = f"[{args.host}]" if ":" in args.host else args.host
     url = f"http://{url_host}:{args.port}"
     print(f"PhoneAgent Web Console: {url}")
     print("Startup checks run once for this server session. Press Ctrl+C to stop.")

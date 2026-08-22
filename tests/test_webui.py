@@ -7,6 +7,7 @@ import time
 from contextvars import copy_context
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
 import pytest
@@ -15,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from phoneagent.runtime import AgentEvent, EventType
 from webui.runtime import ConsoleRuntime, TrajectoryStore, _build_configs, _build_pricing
-from webui.server import ConsoleHTTPServer
+from webui.server import ConsoleHTTPServer, _validate_bind_host
 
 
 _urlopen = build_opener(ProxyHandler({})).open
@@ -444,6 +445,8 @@ def test_http_console_serves_frontend_and_accepts_task(tmp_path: Path) -> None:
             assert 'class="sidebar-runtime"' not in html
             assert html.index('class="conversation-shell"') < html.index('class="preflight-gate"')
             assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+            assert response.headers["Cross-Origin-Resource-Policy"] == "same-origin"
+            assert response.headers["Cross-Origin-Opener-Policy"] == "same-origin"
 
         with _urlopen(f"{base_url}/app.js", timeout=2) as response:
             javascript = response.read().decode("utf-8")
@@ -461,10 +464,41 @@ def test_http_console_serves_frontend_and_accepts_task(tmp_path: Path) -> None:
             assert "document.createElementNS" in usage_javascript
             assert "INPUT_PRICE_PER_1M_TOKENS" in usage_javascript
 
+        invalid_host_request = Request(
+            f"{base_url}/api/state",
+            headers={"Host": "attacker.example"},
+        )
+        with pytest.raises(HTTPError) as invalid_host:
+            _urlopen(invalid_host_request, timeout=2)
+        assert invalid_host.value.code == 421
+
+        invalid_host_post = Request(
+            f"{base_url}/api/tasks",
+            data=json.dumps({"task": "open WeChat"}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Host": "attacker.example"},
+            method="POST",
+        )
+        with pytest.raises(HTTPError) as invalid_post:
+            _urlopen(invalid_host_post, timeout=2)
+        assert invalid_post.value.code == 421
+
+        cross_origin_request = Request(
+            f"{base_url}/api/tasks",
+            data=json.dumps({"task": "open WeChat"}).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Origin": "https://attacker.example",
+            },
+            method="POST",
+        )
+        with pytest.raises(HTTPError) as cross_origin:
+            _urlopen(cross_origin_request, timeout=2)
+        assert cross_origin.value.code == 403
+
         request = Request(
             f"{base_url}/api/tasks",
             data=json.dumps({"task": "open WeChat"}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Origin": base_url},
             method="POST",
         )
         with _urlopen(request, timeout=2) as response:
@@ -480,6 +514,19 @@ def test_http_console_serves_frontend_and_accepts_task(tmp_path: Path) -> None:
         server.server_close()
         runtime.close()
         thread.join(timeout=2)
+
+
+def test_web_console_rejects_unsafe_bind_hosts_without_explicit_opt_in() -> None:
+    _validate_bind_host("127.0.0.1", allow_remote=False)
+    _validate_bind_host("::1", allow_remote=False)
+    _validate_bind_host("192.0.2.10", allow_remote=True)
+
+    with pytest.raises(ValueError, match="non-loopback"):
+        _validate_bind_host("192.0.2.10", allow_remote=False)
+    with pytest.raises(ValueError, match="Wildcard"):
+        _validate_bind_host("0.0.0.0", allow_remote=True)
+    with pytest.raises(ValueError, match="Wildcard"):
+        _validate_bind_host("::", allow_remote=True)
 
 
 def test_http_console_cancels_task_waiting_for_confirmation(tmp_path: Path) -> None:

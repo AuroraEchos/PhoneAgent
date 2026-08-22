@@ -108,6 +108,39 @@ def test_report_rates_only_use_externally_judged_runs() -> None:
     assert aggregate["total_tokens"] == 420
 
 
+def test_summary_reports_semantic_review_request_purposes_and_verdicts() -> None:
+    reviewed = trajectory()
+    reviewed["events"].extend(
+        [
+            {
+                "type": "model_request",
+                "step": 2,
+                "payload": {"purpose": "task_completion"},
+            },
+            {
+                "type": "task_verification",
+                "step": 2,
+                "payload": {"verdict": "pass"},
+            },
+            {
+                "type": "risk_review",
+                "step": 1,
+                "payload": {"verdict": "confirm"},
+            },
+        ]
+    )
+
+    summary = summarize_trajectory(reviewed)
+
+    assert summary["model_requests"] == 3
+    assert summary["model_request_purposes"] == {
+        "planning": 2,
+        "task_completion": 1,
+    }
+    assert summary["task_verification_verdicts"] == {"pass": 1}
+    assert summary["risk_review_verdicts"] == {"confirm": 1}
+
+
 def test_loaders_validate_inputs_and_cli_writes_report(tmp_path: Path, capsys) -> None:
     runs = tmp_path / "runs"
     runs.mkdir()
